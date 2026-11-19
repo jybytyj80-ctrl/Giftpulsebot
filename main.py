@@ -135,6 +135,44 @@ async def test_mrkt_session() -> str:
         return f"فشل اتصال Telethon بـ MRKT: {e}"
 
 
+async def inspect_mrkt_content() -> str:
+    if not (API_ID_ENV.isdigit() and API_HASH_ENV and TG_SESSION_STRING):
+        return "متغيرات الجلسة غير مكتملة."
+
+    try:
+        async with TelegramClient(
+            StringSession(TG_SESSION_STRING),
+            int(API_ID_ENV),
+            API_HASH_ENV,
+        ) as tg_client:
+            peer = await tg_client.get_input_entity(MRKT_BOT_USERNAME)
+            msgs = await tg_client.get_messages(peer, limit=8)
+
+            found_urls = []
+            buttons_info = []
+
+            for m in msgs:
+                text = getattr(m, "message", "") or ""
+                found_urls.extend(re.findall(r"https?://\S+", text))
+
+                if getattr(m, "buttons", None):
+                    for row in m.buttons:
+                        for btn in row:
+                            btn_text = getattr(btn, "text", "") or ""
+                            btn_url = getattr(btn, "url", "") or ""
+                            if btn_url:
+                                found_urls.append(btn_url)
+                            buttons_info.append(f"{btn_text} -> {btn_url or 'زر داخلي'}")
+
+            unique_urls = list(dict.fromkeys(found_urls))
+            lines = [f"فحص @{MRKT_BOT_USERNAME} (آخر {len(msgs)} رسائل):"]
+            lines.append(f"الروابط الظاهرة: {', '.join(unique_urls[:6]) if unique_urls else 'لا توجد روابط مباشرة'}")
+            lines.append(f"الأزرار الظاهرة: {', '.join(buttons_info[:6]) if buttons_info else 'لا توجد أزرار'}")
+            return "\n".join(lines)
+    except Exception as e:
+        return f"خطأ أثناء فحص محتوى MRKT: {e}"
+
+
 def extract_buy_budget(text: str):
     low = text.lower().strip()
     buy_keywords = (
@@ -241,6 +279,11 @@ async def handle_user_message(message: types.Message):
     if user_text == "فحص_الجلسة" and ADMIN_ID is not None and user_id == ADMIN_ID:
         status_msg = await test_mrkt_session()
         await message.answer(status_msg, disable_web_page_preview=True)
+        return
+
+    if user_text == "فحص_ماركت" and ADMIN_ID is not None and user_id == ADMIN_ID:
+        info_msg = await inspect_mrkt_content()
+        await message.answer(info_msg, disable_web_page_preview=True)
         return
 
     if user_text.startswith("تحديث:") and ADMIN_ID is not None and user_id == ADMIN_ID:
