@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import gzip
+import json
 import os
 import re
 import sqlite3
@@ -308,9 +309,53 @@ def restore_mrkt_session_from_env():
         print(f"فشل استرجاع جلسة MRKT: {e}")
 
 
+def _sanitize_mrkt_payload(data):
+    """يعوّض floorPriceNanoTons إذا كانت None بصفر 0 لتفادي فشل Pydantic."""
+    if isinstance(data, list):
+        for item in data:
+            _sanitize_mrkt_payload(item)
+    elif isinstance(data, dict):
+        if "floorPriceNanoTons" in data and data["floorPriceNanoTons"] is None:
+            data["floorPriceNanoTons"] = 0
+        for v in data.values():
+            if isinstance(v, (list, dict)):
+                _sanitize_mrkt_payload(v)
+    return data
+
+
+def _patch_amrkt_client(mc):
+    """يغلّف دوال جلب البيانات الداخلية في MarketClient لتصحيح floorPriceNanoTons قبل التحقق."""
+    for attr_name in ("_http", "_client", "http", "client", "_session"):
+        sub = getattr(mc, attr_name, None)
+        if sub is None:
+            continue
+        for method_name in ("get", "request", "_request", "post"):
+            orig_fn = getattr(sub, method_name, None)
+            if not callable(orig_fn) or getattr(orig_fn, "_giftpulse_patched", False):
+                continue
+
+            async def _wrapped(self, *args, __orig=orig_fn, **kwargs):
+                resp = await __orig(*args, **kwargs)
+                if isinstance(resp, (list, dict)):
+                    _sanitize_mrkt_payload(resp)
+                elif hasattr(resp, "json") and callable(resp.json):
+                    try:
+                        data = await resp.json()
+                        _sanitize_mrkt_payload(data)
+                        resp.json = lambda d=data: asyncio.sleep(0, result=d)
+                    except Exception:
+                        pass
+                return resp
+
+            import types as py_types
+            bound = py_types.MethodType(_wrapped, sub)
+            setattr(bound, "_giftpulse_patched", True)
+            setattr(sub, method_name, bound)
+
+
 def save_collection_price(name, title, floor_ton):
     slug = normalize_slug(name or "") or normalize_slug(title or "")
-    if not slug or floor_ton is None:
+    if not slug or floor_ton is None or floor_ton <= 0:
         return
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -339,33 +384,7 @@ async def sync_prices_from_mrkt() -> int:
         session_name="mrkt",
         workdir=MRKT_SESSION_DIR,
     ) as mc:
-        raw_cols = None
-        for method_name in ("get_raw_collections", "_get_collections", "fetch_collections"):
-            fn = getattr(mc, method_name, None)
-            if callable(fn):
-                try:
-                    raw_cols = await fn()
-                    break
-                except Exception:
-                    pass
-
-        if raw_cols is not None:
-            count = 0
-            items = raw_cols if isinstance(raw_cols, list) else (getattr(raw_cols, "items", None) or [])
-            for item in items:
-                if isinstance(item, dict):
-                    if item.get("isHidden") or item.get("is_hidden"):
-                        continue
-                    name = item.get("name") or ""
-                    title = item.get("title") or name
-                    floor_nano = item.get("floorPriceNanoTons")
-                    if floor_nano is None:
-                        floor_nano = item.get("floor_price_nano_tons", 0)
-                    floor_ton = float(floor_nano) / 1e9 if isinstance(floor_nano, (int, float)) else None
-                    save_collection_price(name, title, floor_ton)
-                    count += 1
-            return count
-
+        _patch_amrkt_client(mc)
         try:
             cols = await mc.get_collections()
         except Exception as e:
@@ -381,10 +400,11 @@ async def sync_prices_from_mrkt() -> int:
         floor_ton = getattr(c, "floor_price_ton", None)
         if floor_ton is None:
             floor_nano = getattr(c, "floor_price_nano_tons", None)
-            if isinstance(floor_nano, (int, float)):
+            if isinstance(floor_nano, (int, float)) and floor_nano > 0:
                 floor_ton = floor_nano / 1e9
-        save_collection_price(getattr(c, "name", ""), getattr(c, "title", ""), floor_ton)
-        count += 1
+        if floor_ton is not None and floor_ton > 0:
+            save_collection_price(getattr(c, "name", ""), getattr(c, "title", ""), floor_ton)
+            count += 1
     return count
 
 
