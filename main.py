@@ -17,12 +17,13 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 EXPERT_SYSTEM_PROMPT = """
-You are "Giftpulse", an elite and comprehensive expert, analyst, and advisor specializing in Telegram Gifts, Telegram Stars, digital collectibles/NFTs on Telegram, associated marketplaces (like t.me/mrkt), and Telegram as a whole (features, bots, channels, groups, privacy, accounts, and the Telegram ecosystem).
+You are "Giftpulse", a sharp, concise expert on Telegram Gifts, Telegram Stars, collectible gifts, gift marketplaces (such as https://t.me/mrkt), and Telegram features.
 
-CRITICAL RULES YOU MUST FOLLOW:
-1. **Broad Telegram & Gifts/Stars Scope:** Answer questions about Telegram Gifts, Telegram Stars, their values, rarities (models, backdrops, symbols), link parsing, marketplaces, AND general Telegram features, usage, bots, channels, groups, and ecosystem topics.
-2. **Helpful & Clear Guidance:** Give practical, structured, and accurate advice tailored to the user's question (such as gift recommendations within a Stars budget, rarity factors, or Telegram features).
-3. **Language Matching:** Automatically detect the user's language and reply in the exact same language.
+STRICT STYLE & BEHAVIOR RULES:
+1. **Be Brief & Direct:** Keep answers short, punchy, and high-value. No fluff, no long introductions, no repetitive summaries.
+2. **Best Options First:** Immediately give the best gift/Star picks or Telegram solutions based on the user's budget or need.
+3. **Gift Model Links & Access:** Whenever relevant, provide clean links to gift models/collectibles or marketplaces (e.g., https://t.me/mrkt or any exact gift link/model URL provided or known with certainty). Never invent or guess fake URLs; if an exact collectible link isn't known, state the exact model name/category and how to open it directly in Telegram or on https://t.me/mrkt.
+4. **Language Matching:** Reply in the exact language of the user.
 """
 
 user_conversations = {}
@@ -58,8 +59,8 @@ def get_active_model() -> str:
 @dp.message(lambda message: message.text and message.text.startswith('/start'))
 async def cmd_start(message: types.Message):
     welcome_text = (
-        "مرحباً بك في **Giftpulse** 🌟\n\n"
-        "أنا مساعدك الخبير للإجابة عن كل ما يخص **هدايا تيليجرام (Telegram Gifts)**، **النجوم (Stars)**، وأسواقها، بالإضافة إلى **تيليجرام بصورة عامة**."
+        "أهلاً بك في **Giftpulse** ⚡\n"
+        "اختصارات فورية لأفضل هدايا تيليجرام، النجوم، والروابط والأسواق."
     )
     await message.answer(welcome_text, parse_mode="Markdown")
 
@@ -67,7 +68,7 @@ async def cmd_start(message: types.Message):
 @dp.message()
 async def handle_user_message(message: types.Message):
     if not message.text:
-        await message.answer("يرجى إرسال نص مكتوب بخصوص هدايا تيليجرام، النجوم، أو تيليجرام.")
+        await message.answer("أرسل نصاً فقط.")
         return
 
     user_id = message.from_user.id
@@ -88,14 +89,14 @@ async def handle_user_message(message: types.Message):
         response = client.chat.completions.create(
             model=model_to_use,
             messages=user_conversations[user_id],
-            temperature=0.3
+            temperature=0.25
         )
         ai_reply = response.choices[0].message.content
         user_conversations[user_id].append({"role": "assistant", "content": ai_reply})
         await message.answer(ai_reply)
     except Exception as e:
         print(f"Groq/Bot error: {e}")
-        await message.answer("عذراً، حدث خطأ تقني مؤقت. يرجى المحاولة مرة أخرى لاحقاً.")
+        await message.answer("حدث خطأ تقني مؤقت، حاول مجدداً.")
 
 
 async def main():
