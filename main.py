@@ -6,7 +6,7 @@ from groq import Groq
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_MODEL = os.getenv("GROQ_MODEL")
 
 if not TELEGRAM_BOT_TOKEN or not GROQ_API_KEY:
     raise ValueError("Missing TELEGRAM_BOT_TOKEN or GROQ_API_KEY in Railway Variables")
@@ -26,6 +26,17 @@ CRITICAL RULES YOU MUST FOLLOW:
 """
 
 user_conversations = {}
+
+
+def get_active_model() -> str:
+    if GROQ_MODEL:
+        return GROQ_MODEL.strip()
+    models = client.models.list().data
+    model_ids = [m.id for m in models]
+    print("Available Groq models:", model_ids)
+    if not model_ids:
+        raise RuntimeError("No Groq models available for this API key")
+    return model_ids[0]
 
 
 @dp.message(lambda message: message.text and message.text.startswith('/start'))
@@ -57,8 +68,9 @@ async def handle_user_message(message: types.Message):
         user_conversations[user_id] = [user_conversations[user_id][0]] + user_conversations[user_id][-10:]
 
     try:
+        model_to_use = get_active_model()
         response = client.chat.completions.create(
-            model=GROQ_MODEL,
+            model=model_to_use,
             messages=user_conversations[user_id],
             temperature=0.3
         )
