@@ -29,14 +29,30 @@ user_conversations = {}
 
 
 def get_active_model() -> str:
-    if GROQ_MODEL:
+    if GROQ_MODEL and GROQ_MODEL.strip():
         return GROQ_MODEL.strip()
+
     models = client.models.list().data
     model_ids = [m.id for m in models]
-    print("Available Groq models:", model_ids)
-    if not model_ids:
-        raise RuntimeError("No Groq models available for this API key")
-    return model_ids[0]
+
+    preferred_order = [
+        "qwen/qwen3.8-27b",
+        "allam-2-7b",
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+    ]
+    for preferred in preferred_order:
+        if preferred in model_ids:
+            return preferred
+
+    chat_candidates = [
+        mid for mid in model_ids
+        if not any(bad in mid.lower() for bad in ("whisper", "orpheus", "guard"))
+    ]
+    if chat_candidates:
+        return chat_candidates[0]
+
+    raise RuntimeError(f"No suitable chat model found in: {model_ids}")
 
 
 @dp.message(lambda message: message.text and message.text.startswith('/start'))
