@@ -64,13 +64,13 @@ INITIAL_GIFTS = [
 ]
 
 EXPERT_SYSTEM_PROMPT = """
-You are "Giftpulse", a sharp Telegram Gifts and MRKT market expert.
+You are "Giftpulse", an expert advisor on Telegram Gifts, Telegram Stars, collectible attributes (Model, Backdrop, Symbol), and trading in the MRKT marketplace.
 
 STRICT RULES:
 1. Keep replies VERY SHORT (maximum 2 to 3 concise lines). No long paragraphs or unnecessary chatter.
 2. Never use ** or markdown asterisks. Plain text only.
 3. Prices in MRKT are in TON (not thousands of Stars). Floor = market floor price; Quick = instant sale price (slightly below floor).
-4. Mention only relevant gifts from the provided database context without inventing fake numbers or live prices.
+4. Never invent fake prices or fake NFT numbers. Base your answer on the database entries provided; if a user asks about high budgets or live MRKT items not in the database, state clearly that they should check MRKT directly.
 5. Answer ONLY about Telegram Gifts, Telegram Stars, collectibles, and MRKT. Outside scope: reply in one short line:
    هذا البوت مخصص لهدايا تيليجرام والنجوم وسوق MRKT.
 """
@@ -92,6 +92,15 @@ def init_db():
             quick_price REAL,
             gift_number INTEGER,
             custom_url TEXT
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS mrkt_feed (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_type TEXT,
+            content TEXT,
+            url TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     cur.execute("SELECT COUNT(*) FROM gifts")
@@ -204,6 +213,21 @@ def upsert_gift_in_db(title, slug, ton_val, stars_val, floor_val, quick_val, num
     conn.close()
 
 
+def save_feed_items(items):
+    if not items:
+        return
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM mrkt_feed")
+    for source_type, content, url in items:
+        cur.execute(
+            "INSERT INTO mrkt_feed (source_type, content, url) VALUES (?, ?, ?)",
+            (source_type, content, url),
+        )
+    conn.commit()
+    conn.close()
+
+
 def get_active_model() -> str:
     if GROQ_MODEL and GROQ_MODEL.strip():
         return GROQ_MODEL.strip()
@@ -229,6 +253,72 @@ def get_active_model() -> str:
         return chat_candidates[0]
 
     raise RuntimeError(f"No suitable chat model found in: {model_ids}")
+
+
+async def sync_mrkt_via_secondary_account() -> str:
+    if not (API_ID_ENV.isdigit() and API_HASH_ENV and TG_SESSION_STRING):
+        return "متغيرات الجلسة (TG_API_ID / TG_API_HASH / TG_SESSION_STRING) غير مكتملة."
+
+    try:
+        async with TelegramClient(
+            StringSession(TG_SESSION_STRING),
+            int(API_ID_ENV),
+            API_HASH_ENV,
+        ) as tg_client:
+            me = await tg_client.get_me()
+            peer = await tg_client.get_input_entity(MRKT_BOT_USERNAME)
+            msgs = await tg_client.get_messages(peer, limit=15)
+
+            collected_feed = []
+            nft_links_found = 0
+            app_links_found = 0
+
+            for m in msgs:
+                text = (getattr(m, "message", "") or "").strip()
+                urls = re.findall(r"https?://\S+", text)
+
+                for u in urls:
+                    clean_u = u.rstrip(").,]")
+                    collected_feed.append(("message_url", text[:160], clean_u))
+                    if "t.me/nft/" in clean_u:
+                        nft_links_found += 1
+                    elif "t.me/mrkt" in clean_u:
+                        app_links_found += 1
+
+                if getattr(m, "buttons", None):
+                    for row in m.buttons:
+                        for btn in row:
+                            btn_text = (getattr(btn, "text", "") or "").strip()
+                            btn_url = (getattr(btn, "url", "") or "").strip()
+                            if btn_url:
+                                collected_feed.append(("button_url", btn_text, btn_url))
+                                if "t.me/nft/" in btn_url:
+                                    nft_links_found += 1
+                                elif "t.me/mrkt" in btn_url:
+                                    app_links_found += 1
+
+                # استخراج أي هدية ورقم يظهران في نص الرسالة لتحديث قاعدة البيانات تلقائياً
+                for nft_match in re.finditer(r"https?://t\.me/nft/([A-Za-z0-9_]+)-(\d+)", text):
+                    slug_part, num_part = nft_match.group(1), nft_match.group(2)
+                    upsert_gift_in_db(
+                        title=slug_part,
+                        slug=slug_part,
+                        ton_val=None,
+                        stars_val=None,
+                        floor_val=None,
+                        quick_val=None,
+                        num_val=int(num_part),
+                        url_val=nft_match.group(0),
+                    )
+
+            save_feed_items(collected_feed)
+            return (
+                f"تمت مزامنة الحساب الثانوي (@{me.username or me.id}) مع @{MRKT_BOT_USERNAME}: "
+                f"حُفظ {len(collected_feed)} عنصر رابط/زر في قاعدة البيانات "
+                f"(روابط NFT: {nft_links_found}، روابط MRKT: {app_links_found})."
+            )
+    except Exception as e:
+        return f"فشل مزامنة الحساب الثانوي: {e}"
 
 
 async def test_mrkt_session() -> str:
@@ -399,7 +489,6 @@ def linkify_gifts_in_reply(ai_reply: str) -> str:
             explicit_url=r.get("custom_url"),
             slug=r.get("slug"),
         )
-        # لا نلف العنوان إذا كان ملفوفاً مسبقاً بوسم <a
         pattern = re.compile(rf'(?<!">)(?<!\w){re.escape(title)}(?!</a>)')
         formatted = pattern.sub(f'<a href="{gift_url}">{title}</a>', formatted, count=1)
     return formatted
@@ -423,6 +512,11 @@ async def handle_user_message(message: types.Message):
 
     user_id = message.from_user.id
     user_text = message.text.strip()
+
+    if user_text == "مزامنة_الحساب" and ADMIN_ID is not None and user_id == ADMIN_ID:
+        sync_msg = await sync_mrkt_via_secondary_account()
+        await message.answer(sync_msg, disable_web_page_preview=True)
+        return
 
     if user_text == "فحص_الجلسة" and ADMIN_ID is not None and user_id == ADMIN_ID:
         status_msg = await test_mrkt_session()
@@ -465,8 +559,8 @@ async def handle_user_message(message: types.Message):
         response = client.chat.completions.create(
             model=model_to_use,
             messages=user_conversations[user_id],
-            temperature=0.15,
-            max_tokens=110,
+            temperature=0.1,
+            max_tokens=100,
         )
         ai_reply = clean_text(response.choices[0].message.content)
         user_conversations[user_id].append({"role": "assistant", "content": ai_reply})
