@@ -1,5 +1,6 @@
 import asyncio
 import base64
+from datetime import datetime
 import gzip
 import importlib
 import os
@@ -7,6 +8,7 @@ import pkgutil
 import re
 import sqlite3
 import sys
+import time
 from typing import Optional
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types
@@ -89,6 +91,18 @@ client = Groq(api_key=GROQ_API_KEY)
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
+
+_CACHED_MODEL: Optional[str] = None
+_GIFTS_CACHE = {
+    "rows": [],
+    "candidates": [],
+    "updated_at": 0.0,
+}
+_SYNC_STATUS = {
+    "last_sync_at": None,
+    "last_synced_count": 0,
+    "last_error": None,
+}
 
 AR_TO_SLUG = {
     "آيس كريم مخروطي": "IceCreamCone",
@@ -309,6 +323,7 @@ def init_db():
     )
   conn.commit()
   conn.close()
+  refresh_gifts_cache(force=True)
 
 
 def clean_text(text: str) -> str:
@@ -363,7 +378,7 @@ def build_nft_link(
   )
 
 
-def get_all_gifts_rows():
+def _query_all_gifts_from_db():
   conn = sqlite3.connect(DB_PATH)
   conn.row_factory = sqlite3.Row
   cur = conn.cursor()
@@ -378,32 +393,74 @@ def get_all_gifts_rows():
   return rows
 
 
-def get_gifts_within_budget(max_ton: float, limit: int = 5):
-  conn = sqlite3.connect(DB_PATH)
-  conn.row_factory = sqlite3.Row
-  cur = conn.cursor()
-  cur.execute(
-      """
-        SELECT title, slug, ton, stars, floor_price, quick_price,
-               gift_number, model, backdrop, symbol, custom_url
-        FROM gifts
-        WHERE ton IS NOT NULL AND ton <= ?
-        ORDER BY ton DESC
-        LIMIT ?
-    """,
-      (max_ton, limit),
-  )
-  rows = [dict(r) for r in cur.fetchall()]
-  conn.close()
+def refresh_gifts_cache(force: bool = False, max_age: float = 30.0):
+  now = time.monotonic()
+  if not force and _GIFTS_CACHE["rows"] and (now - _GIFTS_CACHE["updated_at"]) < max_age:
+    return _GIFTS_CACHE["rows"]
+
+  rows = _query_all_gifts_from_db()
+  candidates = []
+  for r in rows:
+    gift_url = build_auto_gift_url(
+        title=r.get("title", ""),
+        gift_number=r.get("gift_number"),
+        explicit_url=r.get("custom_url"),
+        slug=r.get("slug"),
+    )
+    if not gift_url:
+      continue
+    title = (r.get("title") or "").strip()
+    slug = (r.get("slug") or "").strip()
+    if len(title) >= 2:
+      candidates.append((title, gift_url))
+    if len(slug) >= 3 and slug.lower() != title.lower():
+      candidates.append((slug, gift_url))
+
+  candidates.sort(key=lambda x: len(x[0]), reverse=True)
+  _GIFTS_CACHE["rows"] = rows
+  _GIFTS_CACHE["candidates"] = candidates
+  _GIFTS_CACHE["updated_at"] = now
   return rows
 
 
-def get_all_gifts_summary() -> str:
+def get_all_gifts_rows():
+  return refresh_gifts_cache(force=False)
+
+
+def get_gifts_within_budget(max_ton: float, limit: int = 5):
+  rows = get_all_gifts_rows()
+  matched = [
+      r for r in rows if r.get("ton") is not None and float(r["ton"]) <= max_ton
+  ]
+  return matched[:limit]
+
+
+def get_relevant_gifts_summary(user_text: str) -> str:
+  """يرسل ملخصاً مختصراً وسريعاً للهدايا ذات الصلة بالسؤال لتسريع استجابة النموذج."""
   rows = get_all_gifts_rows()
   if not rows:
     return "لا توجد هدايا مسجلة."
-  parts = []
+
+  q_low = user_text.lower()
+  matched = []
   for r in rows:
+    title = (r.get("title") or "").strip()
+    slug = (r.get("slug") or "").strip()
+    if title and title.lower() in q_low:
+      matched.append(r)
+    elif slug and len(slug) >= 3 and slug.lower() in q_low:
+      matched.append(r)
+
+  budget_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:تون|ton)", q_low)
+  if budget_match and not matched:
+    budget_val = float(budget_match.group(1))
+    matched = [
+        r for r in rows if r.get("ton") is not None and float(r["ton"]) <= budget_val
+    ][:8]
+
+  target_rows = matched[:8] if matched else rows[:15]
+  parts = []
+  for r in target_rows:
     s = f"{r['title']}: {r['ton']:g} TON"
     if r.get("floor_price") is not None and r.get("quick_price") is not None:
       s += f" (فلور {r['floor_price']} / كويك {r['quick_price']})"
@@ -411,6 +468,26 @@ def get_all_gifts_summary() -> str:
       s += f" [موديل: {r['model']}]"
     parts.append(s)
   return " | ".join(parts)
+
+
+def get_db_status_report() -> str:
+  """يعرض تقريراً سريعاً للأدمن عن حالة قاعدة البيانات وآخر مزامنة."""
+  rows = refresh_gifts_cache(force=True)
+  total = len(rows)
+  top_names = ", ".join(r.get("title", "") for r in rows[:5] if r.get("title"))
+  last_sync = _SYNC_STATUS["last_sync_at"] or "لم تتم مزامنة بعد في هذه الدورة"
+  last_count = _SYNC_STATUS["last_synced_count"]
+  last_err = _SYNC_STATUS["last_error"]
+  lines = [
+      "حالة قاعدة البيانات والمزامنة:",
+      f"- إجمالي الهدايا/الكولكشنز المحفوظة: {total}",
+      f"- آخر مزامنة: {last_sync} (عدد الكولكشنز المزامنة: {last_count})",
+      f"- الفاصل الزمني للمزامنة: {SYNC_EVERY} ثانية (~{SYNC_EVERY // 60} دقيقة)",
+      f"- أبرز الأسماء المسجلة: {top_names or 'لا يوجد'}",
+  ]
+  if last_err:
+    lines.append(f"- آخر خطأ مسجل: {last_err}")
+  return "\n".join(lines)
 
 
 def upsert_gift_in_db(
@@ -508,6 +585,7 @@ def upsert_gift_in_db(
 
   conn.commit()
   conn.close()
+  refresh_gifts_cache(force=True)
 
 
 # ===================== مزامنة أسعار MRKT (amrkt) =====================
@@ -538,7 +616,7 @@ def restore_mrkt_session_from_env():
     print(f"فشل استرجاع جلسة MRKT: {e}")
 
 
-def save_collection_price(name, title, floor_ton):
+def save_collection_price(name, title, floor_ton, conn=None):
   """يحفظ/يحدّث سعر الهدية ويحدّث رابطها تلقائياً عند التجميع."""
   clean_title = (title or name or "").strip()
   slug = normalize_slug(name or "") or normalize_slug(clean_title)
@@ -546,7 +624,9 @@ def save_collection_price(name, title, floor_ton):
     return
   display_title = clean_title or slug
 
-  conn = sqlite3.connect(DB_PATH)
+  own_conn = conn is None
+  if own_conn:
+    conn = sqlite3.connect(DB_PATH)
   cur = conn.cursor()
   cur.execute(
       "SELECT id, gift_number, custom_url FROM gifts WHERE LOWER(slug) = LOWER(?)",
@@ -572,42 +652,59 @@ def save_collection_price(name, title, floor_ton):
         " custom_url) VALUES (?, ?, ?, ?, ?)",
         (display_title, slug, floor_ton, floor_ton, auto_url),
     )
-  conn.commit()
-  conn.close()
+  if own_conn:
+    conn.commit()
+    conn.close()
 
 
 async def sync_prices_from_mrkt() -> int:
   if not (API_ID_ENV.isdigit() and API_HASH_ENV):
     raise RuntimeError("TG_API_ID / TG_API_HASH غير مكتملة.")
-  async with MarketClient(
-      api_id=int(API_ID_ENV),
-      api_hash=API_HASH_ENV,
-      session_name="mrkt",
-      workdir=MRKT_SESSION_DIR,
-  ) as mc:
-    try:
-      cols = await mc.get_collections()
-    except Exception as e:
-      print(f"تحذير أثناء قراءة بعض الكولكشنز في get_collections: {e}")
-      return 0
+  try:
+    async with MarketClient(
+        api_id=int(API_ID_ENV),
+        api_hash=API_HASH_ENV,
+        session_name="mrkt",
+        workdir=MRKT_SESSION_DIR,
+    ) as mc:
+      try:
+        cols = await mc.get_collections()
+      except Exception as e:
+        print(f"تحذير أثناء قراءة بعض الكولكشنز في get_collections: {e}")
+        _SYNC_STATUS["last_error"] = str(e)
+        return 0
 
-  if cols:
-    print("مثال من MRKT:", cols[0])
-  count = 0
-  for c in cols:
-    if getattr(c, "is_hidden", False):
-      continue
-    floor_ton = getattr(c, "floor_price_ton", None)
-    if floor_ton is None:
-      floor_nano = getattr(c, "floor_price_nano_tons", None)
-      if isinstance(floor_nano, (int, float)) and floor_nano > 0:
-        floor_ton = floor_nano / 1e9
-    if floor_ton is not None and floor_ton > 0:
-      save_collection_price(
-          getattr(c, "name", ""), getattr(c, "title", ""), floor_ton
-      )
-      count += 1
-  return count
+    if cols:
+      print("مثال من MRKT:", cols[0])
+
+    conn = sqlite3.connect(DB_PATH)
+    count = 0
+    try:
+      for c in cols:
+        if getattr(c, "is_hidden", False):
+          continue
+        floor_ton = getattr(c, "floor_price_ton", None)
+        if floor_ton is None:
+          floor_nano = getattr(c, "floor_price_nano_tons", None)
+          if isinstance(floor_nano, (int, float)) and floor_nano > 0:
+            floor_ton = floor_nano / 1e9
+        if floor_ton is not None and floor_ton > 0:
+          save_collection_price(
+              getattr(c, "name", ""), getattr(c, "title", ""), floor_ton, conn=conn
+          )
+          count += 1
+      conn.commit()
+    finally:
+      conn.close()
+
+    refresh_gifts_cache(force=True)
+    _SYNC_STATUS["last_sync_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _SYNC_STATUS["last_synced_count"] = count
+    _SYNC_STATUS["last_error"] = None
+    return count
+  except Exception as e:
+    _SYNC_STATUS["last_error"] = str(e)
+    raise
 
 
 async def mrkt_sync_loop():
@@ -713,8 +810,13 @@ async def start_api_server():
 
 
 def get_active_model() -> str:
+  global _CACHED_MODEL
+  if _CACHED_MODEL:
+    return _CACHED_MODEL
+
   if GROQ_MODEL and GROQ_MODEL.strip():
-    return GROQ_MODEL.strip()
+    _CACHED_MODEL = GROQ_MODEL.strip()
+    return _CACHED_MODEL
 
   models = client.models.list().data
   model_ids = [m.id for m in models]
@@ -727,7 +829,8 @@ def get_active_model() -> str:
   ]
   for preferred in preferred_order:
     if preferred in model_ids:
-      return preferred
+      _CACHED_MODEL = preferred
+      return _CACHED_MODEL
 
   chat_candidates = [
       mid
@@ -735,7 +838,8 @@ def get_active_model() -> str:
       if not any(bad in mid.lower() for bad in ("whisper", "orpheus", "guard"))
   ]
   if chat_candidates:
-    return chat_candidates[0]
+    _CACHED_MODEL = chat_candidates[0]
+    return _CACHED_MODEL
 
   raise RuntimeError(f"No suitable chat model found in: {model_ids}")
 
@@ -1012,26 +1116,8 @@ def handle_admin_update(user_text: str):
 
 def linkify_gifts_in_reply(ai_reply: str) -> str:
   """يحوّل تلقائياً أسماء الهدايا المجمّعة خارج وسوم HTML إلى روابط قابلة للضغط."""
-  rows = get_all_gifts_rows()
-
-  candidates = []
-  for r in rows:
-    gift_url = build_auto_gift_url(
-        title=r.get("title", ""),
-        gift_number=r.get("gift_number"),
-        explicit_url=r.get("custom_url"),
-        slug=r.get("slug"),
-    )
-    if not gift_url:
-      continue
-    title = (r.get("title") or "").strip()
-    slug = (r.get("slug") or "").strip()
-    if len(title) >= 2:
-      candidates.append((title, gift_url))
-    if len(slug) >= 3 and slug.lower() != title.lower():
-      candidates.append((slug, gift_url))
-
-  candidates.sort(key=lambda x: len(x[0]), reverse=True)
+  refresh_gifts_cache(force=False)
+  candidates = _GIFTS_CACHE["candidates"]
   used_urls = set()
 
   def _linkify_plain_segment(segment: str) -> str:
@@ -1090,6 +1176,10 @@ async def handle_user_message(message: types.Message):
   user_id = message.from_user.id
   user_text = message.text.strip()
 
+  if user_text == "حالة_القاعدة" and ADMIN_ID is not None and user_id == ADMIN_ID:
+    await message.answer(get_db_status_report(), disable_web_page_preview=True)
+    return
+
   if user_text == "مزامنة_الحساب" and ADMIN_ID is not None and user_id == ADMIN_ID:
     sync_msg = await sync_mrkt_via_secondary_account()
     await message.answer(sync_msg, disable_web_page_preview=True)
@@ -1139,7 +1229,7 @@ async def handle_user_message(message: types.Message):
         {"role": "system", "content": EXPERT_SYSTEM_PROMPT}
     ]
 
-  db_snapshot = get_all_gifts_summary()
+  db_snapshot = get_relevant_gifts_summary(user_text)
   enriched_prompt = f"{user_text}\n\n[بيانات قاعدة البيانات: {db_snapshot}]"
 
   user_conversations[user_id].append({"role": "user", "content": enriched_prompt})
@@ -1150,11 +1240,13 @@ async def handle_user_message(message: types.Message):
 
   try:
     model_to_use = get_active_model()
-    response = client.chat.completions.create(
-        model=model_to_use,
-        messages=user_conversations[user_id],
-        temperature=0.1,
-        max_tokens=100,
+    response = await asyncio.to_thread(
+        lambda: client.chat.completions.create(
+            model=model_to_use,
+            messages=user_conversations[user_id],
+            temperature=0.1,
+            max_tokens=100,
+        )
     )
     ai_reply = clean_text(response.choices[0].message.content)
     user_conversations[user_id].append({"role": "assistant", "content": ai_reply})
@@ -1185,6 +1277,10 @@ async def handle_user_message(message: types.Message):
 
 async def main():
   init_db()
+  try:
+    _ = get_active_model()
+  except Exception as e:
+    print(f"Model pre-cache warning: {e}")
   await start_api_server()
 
   # تشغيل مزامنة الأسعار فقط إذا كان ملف جلسة MRKT موجوداً (حتى لا يتعطل البوت بانتظار كود الدخول)
