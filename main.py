@@ -3,7 +3,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from groq import Groq
 
-TELEGRAM_BOT_TOKEN = "9169040757:AAEPPnxFAiz_93l-GT6sNn2Txwr0_l9qDYo"
+TELEGRAM_BOT_TOKEN = "9169040757:AAFX0eXpYhHU-2YCpOTAma0-L3_FeCMxIXI"
 GROQ_API_KEY = "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"
 
 client = Groq(api_key=GROQ_API_KEY)
