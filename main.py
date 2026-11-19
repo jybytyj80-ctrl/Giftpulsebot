@@ -18,29 +18,34 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-GIFT_ITEMS = [
-    {"title": "آيس كريم مخروطي", "stars": 300, "url": "tg://premium_multigift"},
-    {"title": "نودلز", "stars": 438, "url": "tg://premium_multigift"},
-    {"title": "آيس كريم شوكولاتة", "stars": 449, "url": "tg://premium_multigift"},
-    {"title": "شعلة", "stars": 460, "url": "tg://premium_multigift"},
-    {"title": "تمثال الحرية", "stars": 480, "url": "tg://premium_multigift"},
-    {"title": "كلب الهيب هوب", "stars": 480, "url": "tg://premium_multigift"},
-    {"title": "فانوس", "stars": 480, "url": "tg://premium_multigift"},
-    {"title": "مصاصة ملونة", "stars": 480, "url": "tg://premium_multigift"},
-    {"title": "عوامة فلامنجو", "stars": 480, "url": "tg://premium_multigift"},
-    {"title": "حقيبة تيليجرام", "stars": 480, "url": "tg://premium_multigift"},
-    {"title": "قناع", "stars": 843, "url": "tg://premium_multigift"},
+# عدّل أو أضف هنا مباشرة عند الحاجة (الاسم والسعر بالنجوم فقط)
+MRKT_GIFTS = [
+    {"title": "آيس كريم مخروطي", "stars": 300},
+    {"title": "نودلز", "stars": 438},
+    {"title": "آيس كريم شوكولاتة", "stars": 449},
+    {"title": "شعلة", "stars": 460},
+    {"title": "تمثال الحرية", "stars": 480},
+    {"title": "كلب الهيب هوب", "stars": 480},
+    {"title": "فانوس", "stars": 480},
+    {"title": "مصاصة ملونة", "stars": 480},
+    {"title": "عوامة فلامنجو", "stars": 480},
+    {"title": "حقيبة تيليجرام", "stars": 480},
+    {"title": "قناع", "stars": 843},
 ]
 
 EXPERT_SYSTEM_PROMPT = """
-You are "Giftpulse", an expert advisor on Telegram Gifts, Telegram Stars, collectible gifts, trading terms (like Floor / الفلور and Quick / Quick Sell / الكويك), gift marketplaces, and Telegram features.
+You are "Giftpulse", a specialized expert on Telegram Gifts, Telegram Stars, and the MRKT marketplace.
 
-RULES:
-1. Answer questions about Telegram Gifts, Stars, collectibles, market terms (Floor, Quick/Quick Sell, rarity, models, backdrops, symbols), and Telegram features directly and accurately.
-2. NEVER use ** or asterisks. Write clean plain text only.
-3. Keep every answer short (1 to 3 concise lines) and easy to understand with a practical example when helpful.
-4. Only if a question is clearly unrelated to Telegram, Gifts, Stars, or collectibles, say briefly: هذا البوت مخصص لهدايا تيليجرام والنجوم وميزات تيليجرام.
-5. Never put links in normal replies. Match the user's language.
+MARKET TERMS (follow the user's exact definitions):
+- الكويك / الكويك سيل (Quick / Quick Sell): عرض الهدية بسعر أقل من قيمتها للبيع الفوري السريع، مثلاً هدية قيمتها 12 TON تعرضها بـ 10 TON لتتباع فوراً.
+- الفلور (Floor): أقصى سعر وصلت له الهدية.
+
+STRICT RULES:
+1. NEVER use ** or markdown asterisks. Plain clean text only.
+2. Keep every reply short (1 to 3 concise lines), clear, and practical.
+3. Answer ONLY about Telegram Gifts, Telegram Stars, collectibles, MRKT marketplace, and Telegram features. If outside this scope, reply in one short plain line:
+   هذا البوت مخصص لهدايا تيليجرام والنجوم وسوق MRKT.
+4. Never include links in normal replies. Match the user's language.
 """
 
 user_conversations = {}
@@ -80,7 +85,7 @@ def get_active_model() -> str:
 def extract_buy_budget(text: str):
     buy_keywords = (
         "شراء", "اشتري", "أشتري", "هديه", "هدية", "نجمه", "نجمة", "نجوم",
-        "ميزانيه", "ميزانية", "سعر", "بقيمه", "بقيمة", "بـ",
+        "ميزانيه", "ميزانية", "سعر", "بقيمه", "بقيمة", "بـ", "ماركت", "mrkt",
         "buy", "gift", "star", "stars", "budget"
     )
     has_buy_intent = any(k in text.lower() for k in buy_keywords)
@@ -93,13 +98,13 @@ def extract_buy_budget(text: str):
 @dp.message(lambda message: message.text and message.text.startswith('/start'))
 async def cmd_start(message: types.Message):
     user_conversations.pop(message.from_user.id, None)
-    await message.answer("Giftpulse ⚡ خبير هدايا ونجوم تيليجرام.")
+    await message.answer("Giftpulse ⚡ خبير هدايا تيليجرام والنجوم وسوق MRKT.")
 
 
 @dp.message()
 async def handle_user_message(message: types.Message):
     if not message.text:
-        await message.answer("أرسل نصاً عن الهدايا أو النجوم.")
+        await message.answer("أرسل نصاً عن الهدايا أو النجوم أو سوق MRKT.")
         return
 
     user_id = message.from_user.id
@@ -108,17 +113,16 @@ async def handle_user_message(message: types.Message):
     budget = extract_buy_budget(user_text)
     if budget is not None:
         matched = sorted(
-            [g for g in GIFT_ITEMS if g["stars"] <= budget],
+            [g for g in MRKT_GIFTS if g["stars"] <= budget],
             key=lambda x: x["stars"],
             reverse=True
         )[:5]
         if matched:
-            lines = ["أفضل النتائج:"]
+            lines = ["أفضل النتائج من MRKT:"]
             for item in matched:
-                lines.append(f"• {item['title']} — {item['stars']}+ ⭐")
+                lines.append(f"• {item['title']} — {item['stars']} ⭐")
             kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="هدايا تيليجرام", url="tg://premium_multigift")],
-                [InlineKeyboardButton(text="السوق MRKT", url="https://t.me/mrkt")],
+                [InlineKeyboardButton(text="فتح سوق MRKT", url="https://t.me/mrkt")],
             ])
             await message.answer("\n".join(lines), reply_markup=kb, disable_web_page_preview=True)
             return
