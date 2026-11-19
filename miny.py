@@ -335,18 +335,19 @@ def resolve_slug(title: str, explicit_slug=None) -> str:
 def build_auto_gift_url(
     title: str, gift_number=None, explicit_url=None, slug=None
 ) -> str:
-  """يبني تلقائياً رابط الهدية بناءً على اسمها/الـ slug ورقمها أو رابطها المخصص."""
+  """يبني رابط NFT إذا وُجد رقم هدية صحيح، وإلا يوجّه مباشرة إلى سوق MRKT."""
   if explicit_url and explicit_url.strip():
-    return explicit_url.strip()
+    clean_url = explicit_url.strip()
+    if re.search(r"https?://t\.me/nft/[A-Za-z0-9_]+$", clean_url, re.IGNORECASE):
+      return DEFAULT_MARKET_URL
+    return clean_url
 
-  resolved = resolve_slug(title, slug)
   if gift_number is not None:
     num_str = str(gift_number).strip().lstrip("#")
-    if num_str.isdigit() and resolved:
-      return f"https://t.me/nft/{resolved}-{num_str}"
-
-  if resolved:
-    return f"https://t.me/nft/{resolved}"
+    if num_str.isdigit():
+      resolved = resolve_slug(title, slug)
+      if resolved:
+        return f"https://t.me/nft/{resolved}-{num_str}"
 
   return DEFAULT_MARKET_URL
 
@@ -434,14 +435,16 @@ def upsert_gift_in_db(
   resolved_slug = resolve_slug(
       title, slug or (existing["slug"] if existing else None)
   )
+  effective_num = (
+      num_val if num_val is not None else (existing["gift_number"] if existing else None)
+  )
+  effective_url = (
+      url_val if url_val is not None else (existing["custom_url"] if existing else None)
+  )
   auto_url = build_auto_gift_url(
       title=title,
-      gift_number=num_val
-      if num_val is not None
-      else (existing["gift_number"] if existing else None),
-      explicit_url=url_val
-      if url_val is not None
-      else (existing["custom_url"] if existing else None),
+      gift_number=effective_num,
+      explicit_url=effective_url,
       slug=resolved_slug,
   )
 
@@ -450,7 +453,7 @@ def upsert_gift_in_db(
     new_stars = stars_val if stars_val is not None else existing["stars"]
     new_floor = floor_val if floor_val is not None else existing["floor_price"]
     new_quick = quick_val if quick_val is not None else existing["quick_price"]
-    new_num = num_val if num_val is not None else existing["gift_number"]
+    new_num = effective_num
     new_model = model_val if model_val is not None else existing["model"]
     new_backdrop = (
         backdrop_val if backdrop_val is not None else existing["backdrop"]
@@ -495,7 +498,7 @@ def upsert_gift_in_db(
             stars_val if stars_val is not None else 0,
             floor_val,
             quick_val,
-            num_val,
+            effective_num,
             model_val,
             backdrop_val,
             symbol_val,
@@ -536,28 +539,34 @@ def restore_mrkt_session_from_env():
 
 
 def save_collection_price(name, title, floor_ton):
-  """يحفظ/يحدّث سعر الهدية ويبني رابطها تلقائياً من اسمها عند التجميع."""
+  """يحفظ/يحدّث سعر الهدية ويحدّث رابطها تلقائياً عند التجميع."""
   clean_title = (title or name or "").strip()
   slug = normalize_slug(name or "") or normalize_slug(clean_title)
   if not slug or floor_ton is None or floor_ton <= 0:
     return
   display_title = clean_title or slug
-  auto_url = build_auto_gift_url(title=display_title, slug=slug)
 
   conn = sqlite3.connect(DB_PATH)
   cur = conn.cursor()
   cur.execute(
-      "SELECT id, custom_url FROM gifts WHERE LOWER(slug) = LOWER(?)", (slug,)
+      "SELECT id, gift_number, custom_url FROM gifts WHERE LOWER(slug) = LOWER(?)",
+      (slug,),
   )
   row = cur.fetchone()
   if row:
-    final_url = row[1] if (row[1] and row[1].strip()) else auto_url
+    auto_url = build_auto_gift_url(
+        title=display_title,
+        gift_number=row[1],
+        explicit_url=row[2],
+        slug=slug,
+    )
     cur.execute(
         "UPDATE gifts SET ton = ?, floor_price = ?, slug = COALESCE(slug, ?),"
         " custom_url = ? WHERE id = ?",
-        (floor_ton, floor_ton, slug, final_url, row[0]),
+        (floor_ton, floor_ton, slug, auto_url, row[0]),
     )
   else:
+    auto_url = build_auto_gift_url(title=display_title, slug=slug)
     cur.execute(
         "INSERT OR IGNORE INTO gifts (title, slug, ton, floor_price,"
         " custom_url) VALUES (?, ?, ?, ?, ?)",
