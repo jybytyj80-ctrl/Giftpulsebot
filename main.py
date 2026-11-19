@@ -18,18 +18,29 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# ضع هنا الهدايا وروابط Fragment الحقيقية الخاصة بها (وتقدير النجوم للمقارنة)
-FRAGMENT_GIFTS = [
-    # مثال (استبدل الرابط برابط حقيقي من Fragment):
-    # {"title": "اسم الهدية", "stars": 500, "url": "https://fragment.com/gift/..."},
+GIFT_ITEMS = [
+    {"title": "آيس كريم مخروطي", "stars": 300, "url": "tg://premium_multigift"},
+    {"title": "نودلز", "stars": 438, "url": "tg://premium_multigift"},
+    {"title": "آيس كريم شوكولاتة", "stars": 449, "url": "tg://premium_multigift"},
+    {"title": "شعلة", "stars": 460, "url": "tg://premium_multigift"},
+    {"title": "تمثال الحرية", "stars": 480, "url": "tg://premium_multigift"},
+    {"title": "كلب الهيب هوب", "stars": 480, "url": "tg://premium_multigift"},
+    {"title": "فانوس", "stars": 480, "url": "tg://premium_multigift"},
+    {"title": "مصاصة ملونة", "stars": 480, "url": "tg://premium_multigift"},
+    {"title": "عوامة فلامنجو", "stars": 480, "url": "tg://premium_multigift"},
+    {"title": "حقيبة تيليجرام", "stars": 480, "url": "tg://premium_multigift"},
+    {"title": "قناع", "stars": 843, "url": "tg://premium_multigift"},
 ]
 
 EXPERT_SYSTEM_PROMPT = """
-You are "Giftpulse", an ultra-concise Telegram Gifts & Stars assistant.
-Reply ONLY in the user's language.
-Start directly with "أفضل النتائج:" (or equivalent).
-When the user asks to buy a gift with Stars, keep the reply very short, mention best matching items, and include verified links (use https://fragment.com when no specific gift URL is in context).
-NEVER invent or guess specific gift URLs.
+You are "Giftpulse", a strictly specialized Telegram Gifts & Telegram Stars expert inside Telegram.
+
+STRICT RULES:
+1. **Strict Scope:** Answer ONLY about Telegram Gifts, Telegram Stars, collectible gifts/rarity, gift marketplaces, and Telegram features. If asked anything outside this domain, refuse in one short line:
+   "مختص فقط بهدايا تيليجرام، النجوم، وميزات تيليجرام."
+2. **Concise & Direct:** Start with "أفضل النتائج:" when giving options/advice. Keep responses brief and practical with zero fluff.
+3. **No Links Unless Buying With a Budget:** Do NOT include links or link buttons in normal non-budget replies. Links are only shown when the user asks to buy/get a gift within a specific Stars budget.
+4. **Language:** Reply in the user's language.
 """
 
 user_conversations = {}
@@ -62,39 +73,47 @@ def get_active_model() -> str:
     raise RuntimeError(f"No suitable chat model found in: {model_ids}")
 
 
-def extract_budget(text: str):
+def extract_buy_budget(text: str):
+    buy_keywords = ("شراء", "اشتري", "أشتري", "هديه", "هدية", "نجمه", "نجمة", "نجوم", "ميزانيه", "ميزانية", "سعر", "بقيمه", "بقيمة", "بـ", "buy", "gift", "star", "stars", "budget")
+    has_buy_intent = any(k in text.lower() for k in buy_keywords)
     match = re.search(r"\b(\d{2,6})\b", text)
-    return int(match.group(1)) if match else None
+    if match and has_buy_intent:
+        return int(match.group(1))
+    return None
 
 
 @dp.message(lambda message: message.text and message.text.startswith('/start'))
 async def cmd_start(message: types.Message):
-    await message.answer("**Giftpulse** ⚡ أرسل ميزانيتك بالنجوم.", parse_mode="Markdown")
+    await message.answer(
+        "**Giftpulse** ⚡ خبير هدايا ونجوم تيليجرام.",
+        parse_mode="Markdown"
+    )
 
 
 @dp.message()
 async def handle_user_message(message: types.Message):
     if not message.text:
-        await message.answer("أرسل نصاً فقط.")
+        await message.answer("أرسل نصاً عن الهدايا أو النجوم.")
         return
 
     user_id = message.from_user.id
     user_text = message.text.strip()
 
-    budget = extract_budget(user_text)
-    if budget is not None and FRAGMENT_GIFTS:
+    budget = extract_buy_budget(user_text)
+    if budget is not None:
         matched = sorted(
-            [g for g in FRAGMENT_GIFTS if g["stars"] <= budget],
+            [g for g in GIFT_ITEMS if g["stars"] <= budget],
             key=lambda x: x["stars"],
             reverse=True
         )[:5]
         if matched:
             lines = ["أفضل النتائج:"]
-            buttons = []
             for item in matched:
-                lines.append(f"• {item['title']} — {item['stars']} ⭐")
-                buttons.append([InlineKeyboardButton(text=f"رابط {item['title']} على Fragment", url=item["url"])])
-            kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+                lines.append(f"• {item['title']} — {item['stars']}+ ⭐")
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="هدايا تيليجرام", url="tg://premium_multigift")],
+                [InlineKeyboardButton(text="السوق MRKT", url="https://t.me/mrkt")],
+            ])
             await message.answer("\n".join(lines), reply_markup=kb, disable_web_page_preview=True)
             return
 
@@ -112,17 +131,12 @@ async def handle_user_message(message: types.Message):
         response = client.chat.completions.create(
             model=model_to_use,
             messages=user_conversations[user_id],
-            temperature=0.15,
-            max_tokens=180
+            temperature=0.1,
+            max_tokens=160
         )
         ai_reply = response.choices[0].message.content
         user_conversations[user_id].append({"role": "assistant", "content": ai_reply})
-
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="فتح Fragment", url="https://fragment.com")],
-            [InlineKeyboardButton(text="هدايا تيليجرام", url="tg://premium_multigift")],
-        ])
-        await message.answer(ai_reply, reply_markup=kb, disable_web_page_preview=True)
+        await message.answer(ai_reply, disable_web_page_preview=True)
     except Exception as e:
         print(f"Groq/Bot error: {e}")
         await message.answer("حدث خطأ تقني مؤقت، حاول مجدداً.")
