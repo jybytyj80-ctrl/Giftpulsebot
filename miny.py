@@ -54,6 +54,18 @@ if not TELEGRAM_BOT_TOKEN or not GROQ_API_KEY:
   raise ValueError("Missing TELEGRAM_BOT_TOKEN or GROQ_API_KEY in Railway Variables")
 
 
+def get_db_conn(row_factory: bool = False) -> sqlite3.Connection:
+  conn = sqlite3.connect(DB_PATH, timeout=30.0)
+  conn.execute("PRAGMA busy_timeout=30000")
+  try:
+    conn.execute("PRAGMA journal_mode=WAL")
+  except Exception:
+    pass
+  if row_factory:
+    conn.row_factory = sqlite3.Row
+  return conn
+
+
 def patch_amrkt_gift_collection_model():
   """يبحث في جميع وحدات مكتبة amrkt ويسمح بأن يكون floorPriceNanoTons قابلاً لـ None."""
   try:
@@ -100,6 +112,7 @@ dp = Dispatcher(storage=storage)
 
 _CACHED_MODEL: Optional[str] = None
 _LOGGED_AMRKT_METHODS = False
+_SYNC_LOCK = asyncio.Lock()
 _GIFTS_CACHE = {
     "rows": [],
     "candidates": [],
@@ -289,48 +302,50 @@ user_conversations = {}
 
 
 def init_db():
-  conn = sqlite3.connect(DB_PATH)
-  cur = conn.cursor()
-  cur.execute("""
-        CREATE TABLE IF NOT EXISTS gifts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT UNIQUE NOT NULL,
-            slug TEXT,
-            ton REAL DEFAULT 0.0,
-            stars INTEGER DEFAULT 0,
-            floor_price REAL,
-            quick_price REAL,
-            gift_number INTEGER,
-            model TEXT,
-            backdrop TEXT,
-            symbol TEXT,
-            custom_url TEXT
-        )
-    """)
-  cur.execute("""
-        CREATE TABLE IF NOT EXISTS mrkt_feed (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_type TEXT,
-            content TEXT,
-            url TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-  cur.execute("SELECT COUNT(*) FROM gifts")
-  count = cur.fetchone()[0]
-  if count == 0:
-    cur.executemany(
-        """
-            INSERT INTO gifts (
-                title, slug, ton, stars, floor_price, quick_price,
-                gift_number, model, backdrop, symbol, custom_url
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        INITIAL_GIFTS,
-    )
-  conn.commit()
-  conn.close()
+  conn = get_db_conn(row_factory=False)
+  try:
+    cur = conn.cursor()
+    cur.execute("""
+          CREATE TABLE IF NOT EXISTS gifts (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              title TEXT UNIQUE NOT NULL,
+              slug TEXT,
+              ton REAL DEFAULT 0.0,
+              stars INTEGER DEFAULT 0,
+              floor_price REAL,
+              quick_price REAL,
+              gift_number INTEGER,
+              model TEXT,
+              backdrop TEXT,
+              symbol TEXT,
+              custom_url TEXT
+          )
+      """)
+    cur.execute("""
+          CREATE TABLE IF NOT EXISTS mrkt_feed (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              source_type TEXT,
+              content TEXT,
+              url TEXT,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          )
+      """)
+    cur.execute("SELECT COUNT(*) FROM gifts")
+    count = cur.fetchone()[0]
+    if count == 0:
+      cur.executemany(
+          """
+              INSERT INTO gifts (
+                  title, slug, ton, stars, floor_price, quick_price,
+                  gift_number, model, backdrop, symbol, custom_url
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          """,
+          INITIAL_GIFTS,
+      )
+    conn.commit()
+  finally:
+    conn.close()
   refresh_gifts_cache(force=True)
 
 
@@ -388,18 +403,18 @@ def build_nft_link(
 
 
 def _query_all_gifts_from_db():
-  conn = sqlite3.connect(DB_PATH)
-  conn.row_factory = sqlite3.Row
-  cur = conn.cursor()
-  cur.execute("""
-        SELECT title, slug, ton, stars, floor_price, quick_price,
-               gift_number, model, backdrop, symbol, custom_url
-        FROM gifts
-        ORDER BY ton DESC
-    """)
-  rows = [dict(r) for r in cur.fetchall()]
-  conn.close()
-  return rows
+  conn = get_db_conn(row_factory=True)
+  try:
+    cur = conn.cursor()
+    cur.execute("""
+          SELECT title, slug, ton, stars, floor_price, quick_price,
+                 gift_number, model, backdrop, symbol, custom_url
+          FROM gifts
+          ORDER BY ton DESC
+      """)
+    return [dict(r) for r in cur.fetchall()]
+  finally:
+    conn.close()
 
 
 def refresh_gifts_cache(force: bool = False, max_age: float = 30.0):
@@ -527,88 +542,93 @@ def upsert_gift_in_db(
     symbol_val=None,
     url_val=None,
 ):
-  conn = sqlite3.connect(DB_PATH)
-  conn.row_factory = sqlite3.Row
-  cur = conn.cursor()
-  cur.execute("SELECT * FROM gifts WHERE LOWER(title) = LOWER(?)", (title,))
-  existing = cur.fetchone()
+  conn = get_db_conn(row_factory=True)
+  try:
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM gifts WHERE LOWER(title) = LOWER(?)", (title,))
+    existing = cur.fetchone()
 
-  resolved_slug = resolve_slug(
-      title, slug or (existing["slug"] if existing else None)
-  )
-  effective_num = (
-      num_val if num_val is not None else (existing["gift_number"] if existing else None)
-  )
-  effective_url = (
-      url_val if url_val is not None else (existing["custom_url"] if existing else None)
-  )
-  auto_url = build_auto_gift_url(
-      title=title,
-      gift_number=effective_num,
-      explicit_url=effective_url,
-      slug=resolved_slug,
-  )
-
-  if existing:
-    new_ton = ton_val if ton_val is not None else existing["ton"]
-    new_stars = stars_val if stars_val is not None else existing["stars"]
-    new_floor = floor_val if floor_val is not None else existing["floor_price"]
-    new_quick = quick_val if quick_val is not None else existing["quick_price"]
-    new_num = effective_num
-    new_model = model_val if model_val is not None else existing["model"]
-    new_backdrop = (
-        backdrop_val if backdrop_val is not None else existing["backdrop"]
+    resolved_slug = resolve_slug(
+        title, slug or (existing["slug"] if existing else None)
     )
-    new_symbol = symbol_val if symbol_val is not None else existing["symbol"]
-    new_url = auto_url
-
-    cur.execute(
-        """
-            UPDATE gifts
-            SET slug = ?, ton = ?, stars = ?, floor_price = ?, quick_price = ?,
-                gift_number = ?, model = ?, backdrop = ?, symbol = ?, custom_url = ?
-            WHERE id = ?
-        """,
-        (
-            resolved_slug,
-            new_ton,
-            new_stars,
-            new_floor,
-            new_quick,
-            new_num,
-            new_model,
-            new_backdrop,
-            new_symbol,
-            new_url,
-            existing["id"],
-        ),
+    effective_num = (
+        num_val
+        if num_val is not None
+        else (existing["gift_number"] if existing else None)
     )
-  else:
-    cur.execute(
-        """
-            INSERT INTO gifts (
-                title, slug, ton, stars, floor_price, quick_price,
-                gift_number, model, backdrop, symbol, custom_url
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            title,
-            resolved_slug,
-            ton_val if ton_val is not None else 0.0,
-            stars_val if stars_val is not None else 0,
-            floor_val,
-            quick_val,
-            effective_num,
-            model_val,
-            backdrop_val,
-            symbol_val,
-            auto_url,
-        ),
+    effective_url = (
+        url_val
+        if url_val is not None
+        else (existing["custom_url"] if existing else None)
+    )
+    auto_url = build_auto_gift_url(
+        title=title,
+        gift_number=effective_num,
+        explicit_url=effective_url,
+        slug=resolved_slug,
     )
 
-  conn.commit()
-  conn.close()
+    if existing:
+      new_ton = ton_val if ton_val is not None else existing["ton"]
+      new_stars = stars_val if stars_val is not None else existing["stars"]
+      new_floor = floor_val if floor_val is not None else existing["floor_price"]
+      new_quick = quick_val if quick_val is not None else existing["quick_price"]
+      new_num = effective_num
+      new_model = model_val if model_val is not None else existing["model"]
+      new_backdrop = (
+          backdrop_val if backdrop_val is not None else existing["backdrop"]
+      )
+      new_symbol = symbol_val if symbol_val is not None else existing["symbol"]
+      new_url = auto_url
+
+      cur.execute(
+          """
+              UPDATE gifts
+              SET slug = ?, ton = ?, stars = ?, floor_price = ?, quick_price = ?,
+                  gift_number = ?, model = ?, backdrop = ?, symbol = ?, custom_url = ?
+              WHERE id = ?
+          """,
+          (
+              resolved_slug,
+              new_ton,
+              new_stars,
+              new_floor,
+              new_quick,
+              new_num,
+              new_model,
+              new_backdrop,
+              new_symbol,
+              new_url,
+              existing["id"],
+          ),
+      )
+    else:
+      cur.execute(
+          """
+              INSERT INTO gifts (
+                  title, slug, ton, stars, floor_price, quick_price,
+                  gift_number, model, backdrop, symbol, custom_url
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          """,
+          (
+              title,
+              resolved_slug,
+              ton_val if ton_val is not None else 0.0,
+              stars_val if stars_val is not None else 0,
+              floor_val,
+              quick_val,
+              effective_num,
+              model_val,
+              backdrop_val,
+              symbol_val,
+              auto_url,
+          ),
+      )
+
+    conn.commit()
+  finally:
+    conn.close()
   refresh_gifts_cache(force=True)
 
 
@@ -640,18 +660,14 @@ def restore_mrkt_session_from_env():
     print(f"فشل استرجاع جلسة MRKT: {e}")
 
 
-def save_collection_price(name, title, floor_ton, gift_number=None, conn=None):
-  """يحفظ/يحدّث سعر الكولكشن ورقم الهدية ويبني رابطها بأمان."""
+def save_collection_price(cur, name, title, floor_ton, gift_number=None):
+  """يحفظ/يحدّث سعر الكولكشن ورقم الهدية ويبني رابطها بأمان ضمن معاملة مفتوحة."""
   clean_title = (title or name or "").strip()
   slug = normalize_slug(name or "") or normalize_slug(clean_title)
   if not slug or floor_ton is None or floor_ton <= 0:
     return
   display_title = clean_title or slug
 
-  own_conn = conn is None
-  if own_conn:
-    conn = sqlite3.connect(DB_PATH)
-  cur = conn.cursor()
   cur.execute(
       "SELECT id, gift_number, custom_url FROM gifts WHERE LOWER(slug) = LOWER(?)",
       (slug,),
@@ -679,9 +695,6 @@ def save_collection_price(name, title, floor_ton, gift_number=None, conn=None):
         " gift_number, custom_url) VALUES (?, ?, ?, ?, ?, ?)",
         (display_title, slug, floor_ton, floor_ton, gift_number, auto_url),
     )
-  if own_conn:
-    conn.commit()
-    conn.close()
 
 
 def _parse_gift_slug_and_number(gift_obj) -> Optional[int]:
@@ -729,7 +742,15 @@ async def _fetch_gift_number_via_search(mc, col) -> Optional[int]:
     seen_q.add(q.lower())
 
     kwargs = {}
-    for key in ("name", "title", "collection", "collection_name", "slug", "query", "search"):
+    for key in (
+        "name",
+        "title",
+        "collection",
+        "collection_name",
+        "slug",
+        "query",
+        "search",
+    ):
       if key in params:
         kwargs[key] = q
         break
@@ -769,33 +790,34 @@ async def sync_prices_from_mrkt() -> int:
   global _LOGGED_AMRKT_METHODS
   if not (API_ID_ENV.isdigit() and API_HASH_ENV):
     raise RuntimeError("TG_API_ID / TG_API_HASH غير مكتملة.")
-  try:
-    async with MarketClient(
-        api_id=int(API_ID_ENV),
-        api_hash=API_HASH_ENV,
-        session_name="mrkt",
-        workdir=MRKT_SESSION_DIR,
-    ) as mc:
-      if not _LOGGED_AMRKT_METHODS:
-        public_methods = [
-            m
-            for m in dir(mc)
-            if not m.startswith("_") and callable(getattr(mc, m, None))
-        ]
-        print("دوال MarketClient المتاحة:", public_methods)
-        _LOGGED_AMRKT_METHODS = True
 
-      try:
-        cols = await mc.get_collections()
-      except Exception as e:
-        print(f"تحذير أثناء قراءة بعض الكولكشنز في get_collections: {e}")
-        _SYNC_STATUS["last_error"] = str(e)
-        return 0
-
-      conn = sqlite3.connect(DB_PATH)
-      count = 0
+  async with _SYNC_LOCK:
+    try:
+      fetched_records = []
       numbers_found = 0
-      try:
+
+      async with MarketClient(
+          api_id=int(API_ID_ENV),
+          api_hash=API_HASH_ENV,
+          session_name="mrkt",
+          workdir=MRKT_SESSION_DIR,
+      ) as mc:
+        if not _LOGGED_AMRKT_METHODS:
+          public_methods = [
+              m
+              for m in dir(mc)
+              if not m.startswith("_") and callable(getattr(mc, m, None))
+          ]
+          print("دوال MarketClient المتاحة:", public_methods)
+          _LOGGED_AMRKT_METHODS = True
+
+        try:
+          cols = await mc.get_collections()
+        except Exception as e:
+          print(f"تحذير أثناء قراءة بعض الكولكشنز في get_collections: {e}")
+          _SYNC_STATUS["last_error"] = str(e)
+          return 0
+
         for c in cols:
           if getattr(c, "is_hidden", False):
             continue
@@ -808,34 +830,39 @@ async def sync_prices_from_mrkt() -> int:
             gift_num = await _fetch_gift_number_via_search(mc, c)
             if gift_num is not None:
               numbers_found += 1
-            save_collection_price(
+            fetched_records.append((
                 getattr(c, "name", ""),
                 getattr(c, "title", ""),
                 floor_ton,
-                gift_number=gift_num,
-                conn=conn,
-            )
-            count += 1
+                gift_num,
+            ))
             if FETCH_GIFT_NUMBERS:
               await asyncio.sleep(0.08)
+
+      # حفظ كل النتائج في معاملة واحدة سريعة بعد انتهاء طلبات الشبكة لتجنب database is locked
+      conn = get_db_conn(row_factory=False)
+      try:
+        cur = conn.cursor()
+        for c_name, c_title, f_ton, g_num in fetched_records:
+          save_collection_price(cur, c_name, c_title, f_ton, gift_number=g_num)
         conn.commit()
       finally:
         conn.close()
 
-    refresh_gifts_cache(force=True)
-    confirmed_nums = sum(
-        1
-        for r in _GIFTS_CACHE["rows"]
-        if r.get("gift_number") is not None and int(r["gift_number"]) > 0
-    )
-    _SYNC_STATUS["last_sync_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    _SYNC_STATUS["last_synced_count"] = count
-    _SYNC_STATUS["last_numbers_count"] = max(numbers_found, confirmed_nums)
-    _SYNC_STATUS["last_error"] = None
-    return count
-  except Exception as e:
-    _SYNC_STATUS["last_error"] = str(e)
-    raise
+      refresh_gifts_cache(force=True)
+      confirmed_nums = sum(
+          1
+          for r in _GIFTS_CACHE["rows"]
+          if r.get("gift_number") is not None and int(r["gift_number"]) > 0
+      )
+      _SYNC_STATUS["last_sync_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+      _SYNC_STATUS["last_synced_count"] = len(fetched_records)
+      _SYNC_STATUS["last_numbers_count"] = max(numbers_found, confirmed_nums)
+      _SYNC_STATUS["last_error"] = None
+      return len(fetched_records)
+    except Exception as e:
+      _SYNC_STATUS["last_error"] = str(e)
+      raise
 
 
 async def mrkt_sync_loop():
@@ -843,7 +870,8 @@ async def mrkt_sync_loop():
     try:
       n = await sync_prices_from_mrkt()
       print(
-          f"تمت مزامنة {n} كولكشن من MRKT (أرقام هدايا: {_SYNC_STATUS['last_numbers_count']})"
+          f"تمت مزامنة {n} كولكشن من MRKT (أرقام هدايا:"
+          f" {_SYNC_STATUS['last_numbers_count']})"
       )
     except Exception as e:
       print(f"فشل مزامنة MRKT: {e}")
@@ -881,7 +909,9 @@ async def inspect_amrkt_capabilities() -> str:
           g_res = await mc.search_gifts(limit=2)
           items = getattr(g_res, "items", None) or []
           if items:
-            search_sample = f"search_gifts -> أول هدية: {getattr(items[0], 'name', items[0])}"
+            search_sample = (
+                f"search_gifts -> أول هدية: {getattr(items[0], 'name', items[0])}"
+            )
         except Exception as e:
           search_sample = f"search_gifts -> خطأ: {e}"
 
@@ -898,16 +928,18 @@ async def inspect_amrkt_capabilities() -> str:
 def save_feed_items(items):
   if not items:
     return
-  conn = sqlite3.connect(DB_PATH)
-  cur = conn.cursor()
-  cur.execute("DELETE FROM mrkt_feed")
-  for source_type, content, url in items:
-    cur.execute(
-        "INSERT INTO mrkt_feed (source_type, content, url) VALUES (?, ?, ?)",
-        (source_type, content, url),
-    )
-  conn.commit()
-  conn.close()
+  conn = get_db_conn(row_factory=False)
+  try:
+    cur = conn.cursor()
+    cur.execute("DELETE FROM mrkt_feed")
+    for source_type, content, url in items:
+      cur.execute(
+          "INSERT INTO mrkt_feed (source_type, content, url) VALUES (?, ?, ?)",
+          (source_type, content, url),
+      )
+    conn.commit()
+  finally:
+    conn.close()
 
 
 # --- API Endpoints (aiohttp) ---
