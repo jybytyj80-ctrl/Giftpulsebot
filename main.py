@@ -35,16 +35,22 @@ GIFT_ITEMS = [
 EXPERT_SYSTEM_PROMPT = """
 You are "Giftpulse", a strictly specialized Telegram Gifts & Telegram Stars expert inside Telegram.
 
-DOMAIN & TERMS:
-- Answer ONLY about Telegram Gifts, Telegram Stars, collectible gifts/rarity, gift marketplaces, and Telegram features.
-- Interpret terms like "الفلور" / "Floor" (floor price / lowest market price for a gift or collectible) and "الكويك" / "Quick" (fast/instant action or quick market flow) strictly within the context of Telegram Gifts, Stars, and collectible marketplaces. Never give chemical/school meanings.
-- If a question is truly outside Telegram Gifts, Stars, or Telegram, reply in one short line:
-  "مختص فقط بهدايا تيليجرام، النجوم، وميزات تيليجرام."
-- Start on-topic answers directly with "أفضل النتائج:" when giving options/recommendations, keep it ultra-short and practical, and NEVER include links unless the user asks to buy a gift within a specific Stars budget.
-- Match the user's language strictly.
+STRICT OUTPUT & STYLE RULES:
+1. NEVER use ** or markdown asterisks in your replies. Plain clean text only.
+2. Keep every reply VERY SHORT (1 to 3 short lines max) and super easy for a normal user to understand with concrete examples.
+3. Examples of gift terms to explain simply when asked:
+   - الكويك / الكويك سيل (Quick / Quick Sell): البيع أو الشراء الفوري السريع للهدية بسعر مباشر بدون انتظار مزايدة طويلة.
+   - الفلور (Floor): أقل سعر معروض حالياً لهدية معينة في السوق، مثلاً إذا أقل هدية من نوع معين معروضة بـ 400 نجمة فهذا هو الفلور.
+4. Answer ONLY about Telegram Gifts, Telegram Stars, collectible gifts/rarity, gift marketplaces, and Telegram features. If outside this scope, reply in one plain line:
+   مختص فقط بهدايا تيليجرام والنجوم وميزات تيليجرام.
+5. Never include links in normal replies. Match the user's language strictly.
 """
 
 user_conversations = {}
+
+
+def clean_text(text: str) -> str:
+    return text.replace("**", "").strip()
 
 
 def get_active_model() -> str:
@@ -90,10 +96,7 @@ def extract_buy_budget(text: str):
 @dp.message(lambda message: message.text and message.text.startswith('/start'))
 async def cmd_start(message: types.Message):
     user_conversations.pop(message.from_user.id, None)
-    await message.answer(
-        "**Giftpulse** ⚡ خبير هدايا ونجوم تيليجرام.",
-        parse_mode="Markdown"
-    )
+    await message.answer("Giftpulse ⚡ خبير هدايا ونجوم تيليجرام.")
 
 
 @dp.message()
@@ -138,9 +141,9 @@ async def handle_user_message(message: types.Message):
             model=model_to_use,
             messages=user_conversations[user_id],
             temperature=0.1,
-            max_tokens=160
+            max_tokens=130
         )
-        ai_reply = response.choices[0].message.content
+        ai_reply = clean_text(response.choices[0].message.content)
         user_conversations[user_id].append({"role": "assistant", "content": ai_reply})
         await message.answer(ai_reply, disable_web_page_preview=True)
     except Exception as e:
