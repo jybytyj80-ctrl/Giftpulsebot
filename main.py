@@ -6,6 +6,7 @@ from groq import Groq
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
 if not TELEGRAM_BOT_TOKEN or not GROQ_API_KEY:
     raise ValueError("Missing TELEGRAM_BOT_TOKEN or GROQ_API_KEY in Railway Variables")
@@ -57,8 +58,7 @@ async def handle_user_message(message: types.Message):
 
     try:
         response = client.chat.completions.create(
-            model="model="llama-3.1-8b-instant",
-",
+            model=GROQ_MODEL,
             messages=user_conversations[user_id],
             temperature=0.3
         )
