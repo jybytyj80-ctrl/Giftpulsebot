@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import gzip
 import os
 import re
 import sqlite3
@@ -284,14 +285,24 @@ def mrkt_session_path() -> str:
 
 
 def restore_mrkt_session_from_env():
-    """إذا كان ملف الجلسة غير موجود وتوجد نسخة base64 في المتغيرات، نعيد إنشاءه."""
+    """إذا كان ملف الجلسة غير موجود وتوجد نسخة base64 (عادية أو مضغوطة بـ gzip) في المتغيرات، نعيد إنشاءه."""
     path = mrkt_session_path()
-    if os.path.exists(path) or not MRKT_SESSION_B64:
+    if not MRKT_SESSION_B64:
         return
     try:
         os.makedirs(MRKT_SESSION_DIR, exist_ok=True)
+        cleaned_b64 = "".join(MRKT_SESSION_B64.split())
+        missing_padding = len(cleaned_b64) % 4
+        if missing_padding:
+            cleaned_b64 += "=" * (4 - missing_padding)
+
+        raw_bytes = base64.b64decode(cleaned_b64)
+        # فك ضغط gzip تلقائياً إذا كان النص مضغوطاً بصيغة gzip
+        if raw_bytes[:2] == b"\x1f\x8b":
+            raw_bytes = gzip.decompress(raw_bytes)
+
         with open(path, "wb") as f:
-            f.write(base64.b64decode(MRKT_SESSION_B64))
+            f.write(raw_bytes)
         print("تم استرجاع ملف جلسة MRKT من المتغيرات.")
     except Exception as e:
         print(f"فشل استرجاع جلسة MRKT: {e}")
@@ -328,14 +339,24 @@ async def sync_prices_from_mrkt() -> int:
         session_name="mrkt",
         workdir=MRKT_SESSION_DIR,
     ) as mc:
-        cols = await mc.get_collections()
+        try:
+            cols = await mc.get_collections()
+        except Exception as e:
+            print(f"تحذير أثناء قراءة بعض الكولكشنز في get_collections: {e}")
+            return 0
+
     if cols:
         print("مثال من MRKT:", cols[0])
     count = 0
     for c in cols:
         if getattr(c, "is_hidden", False):
             continue
-        save_collection_price(c.name, c.title, c.floor_price_ton)
+        floor_ton = getattr(c, "floor_price_ton", None)
+        if floor_ton is None:
+            floor_nano = getattr(c, "floor_price_nano_tons", None)
+            if isinstance(floor_nano, (int, float)):
+                floor_ton = floor_nano / 1e9
+        save_collection_price(getattr(c, "name", ""), getattr(c, "title", ""), floor_ton)
         count += 1
     return count
 
