@@ -759,6 +759,80 @@ async def mrkt_sync_loop():
     await asyncio.sleep(SYNC_EVERY)
 
 
+async def inspect_amrkt_capabilities() -> str:
+  if not (API_ID_ENV.isdigit() and API_HASH_ENV):
+    return "متغيرات TG_API_ID / TG_API_HASH غير مكتملة."
+
+  try:
+    async with MarketClient(
+        api_id=int(API_ID_ENV),
+        api_hash=API_HASH_ENV,
+        session_name="mrkt",
+        workdir=MRKT_SESSION_DIR,
+    ) as mc:
+      methods = [
+          m
+          for m in dir(mc)
+          if not m.startswith("_") and callable(getattr(mc, m, None))
+      ]
+      cols = await mc.get_collections()
+      sample_fields = []
+      if cols:
+        first = cols[0]
+        if hasattr(first, "model_dump"):
+          sample_fields = list(first.model_dump().keys())
+        elif hasattr(first, "__dict__"):
+          sample_fields = list(first.__dict__.keys())
+
+      gift_methods = [
+          m
+          for m in methods
+          if m != "get_collections"
+          and any(
+              k in m.lower()
+              for k in ("gift", "listing", "item", "offer", "market", "search")
+          )
+      ]
+      test_results = []
+      sample_col_name = getattr(cols[0], "name", "") if cols else ""
+      for m_name in gift_methods[:6]:
+        fn = getattr(mc, m_name)
+        try:
+          sig = inspect.signature(fn)
+          params = sig.parameters
+          kwargs = {}
+          if "limit" in params:
+            kwargs["limit"] = 2
+          for key in ("collection", "collection_name", "slug", "name", "query"):
+            if key in params and sample_col_name:
+              kwargs[key] = sample_col_name
+              break
+          res = await fn(**kwargs) if kwargs else await fn()
+          r_len = (
+              len(res)
+              if isinstance(res, (list, tuple, dict))
+              else type(res).__name__
+          )
+          r_sample = (
+              str(res[0])[:120]
+              if isinstance(res, list) and res
+              else str(res)[:120]
+          )
+          test_results.append(f"{m_name} -> ({r_len}): {r_sample}")
+        except Exception as e:
+          test_results.append(f"{m_name} -> خطأ: {e}")
+
+      lines = [
+          f"دوال MarketClient ({len(methods)}): {', '.join(methods[:20])}",
+          f"حقول أول كولكشن: {', '.join(sample_fields[:20]) or 'غير ظاهرة'}",
+          "اختبار دوال الهدايا/العروض:",
+          *(test_results or ["لا توجد دوال إضافية مطابقة"]),
+      ]
+      return "\n".join(lines)[:3800]
+  except Exception as e:
+    return f"فشل فحص amrkt: {e}"
+
+
 def save_feed_items(items):
   if not items:
     return
@@ -1245,6 +1319,11 @@ async def handle_user_message(message: types.Message):
 
   if user_text == "فحص_ماركت" and ADMIN_ID is not None and user_id == ADMIN_ID:
     info_msg = await inspect_mrkt_content()
+    await message.answer(info_msg, disable_web_page_preview=True)
+    return
+
+  if user_text == "فحص_amrkt" and ADMIN_ID is not None and user_id == ADMIN_ID:
+    info_msg = await inspect_amrkt_capabilities()
     await message.answer(info_msg, disable_web_page_preview=True)
     return
 
