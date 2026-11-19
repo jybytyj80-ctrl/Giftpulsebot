@@ -39,8 +39,8 @@ API_PORT = int(os.getenv("PORT", "8080"))
 # --- إعدادات مزامنة أسعار MRKT (مكتبة amrkt) ---
 MRKT_SESSION_DIR = os.getenv("MRKT_SESSION_DIR", ".").strip()
 MRKT_SESSION_B64 = os.getenv("MRKT_SESSION_B64", "").strip()
-SYNC_EVERY = int(os.getenv("SYNC_EVERY_SECONDS", "600"))
-FETCH_GIFT_NUMBERS = os.getenv("FETCH_GIFT_NUMBERS", "1").strip().lower() in (
+SYNC_EVERY = int(os.getenv("SYNC_EVERY_SECONDS", "300"))
+FETCH_GIFT_NUMBERS = os.getenv("FETCH_GIFT_NUMBERS", "0").strip().lower() in (
     "1",
     "true",
     "yes",
@@ -276,11 +276,11 @@ EXPERT_SYSTEM_PROMPT = """
 You are "Giftpulse", an expert advisor on Telegram Gifts, Telegram Stars, collectible attributes (Model, Backdrop, Symbol), and trading in the MRKT marketplace.
 
 STRICT RULES:
-1. Keep replies VERY SHORT (maximum 2 concise lines). Include the exact price/floor/quick/model/number details provided in the database entries when answering about a collection.
-2. NEVER say "لا يمكنني عرض روابط" or "لا أستطيع إرسال روابط". Gift names in replies are automatically turned into clickable links by the bot, and there is a "فتح سوق MRKT" button below.
-3. Never use ** or markdown asterisks. Plain text only.
-4. Prices in MRKT are in TON (not thousands of Stars). Floor = floor price; Quick = instant sale price (slightly below floor).
-5. Never invent fake prices or fake NFT numbers. Base your answer on the database entries provided; for high budgets not in the database, advise checking MRKT directly.
+1. Keep replies VERY SHORT (maximum 2 concise lines). Include the exact price/floor/quick/model details provided in the database entries when answering about a collection.
+2. NEVER invent NFT gift numbers (#...) if a gift number is not explicitly given in the database entry. Only mention a number if it is explicitly shown in the database entry.
+3. NEVER say "لا يمكنني عرض روابط" or "لا أستطيع إرسال روابط". Gift names in replies are automatically turned into clickable links by the bot, and there is a "فتح سوق MRKT" button below.
+4. Never use ** or markdown asterisks. Plain text only.
+5. Prices in MRKT are in TON (not thousands of Stars). Floor = floor price; Quick = instant sale price (slightly below floor).
 6. Answer ONLY about Telegram Gifts, Telegram Stars, collectibles, and MRKT. Outside scope: reply in one short line:
    هذا البوت مخصص لهدايا تيليجرام والنجوم وسوق MRKT.
 """
@@ -358,20 +358,18 @@ def resolve_slug(title: str, explicit_slug=None) -> str:
 def build_auto_gift_url(
     title: str, gift_number=None, explicit_url=None, slug=None
 ) -> str:
-  """يبني رابط الهدية في تيليجرام (https://t.me/nft/...) لكل اسم هدية أو كولكشن."""
+  """يبني رابط NFT فقط إذا وُجد رقم هدية مؤكد أو رابط NFT صريح؛ وإلا يوجّه إلى سوق MRKT."""
   if explicit_url and explicit_url.strip():
     clean_url = explicit_url.strip()
-    if "t.me/nft/" in clean_url.lower():
+    if re.search(r"https?://t\.me/nft/[A-Za-z0-9_]+-\d+", clean_url, re.IGNORECASE):
       return clean_url
 
-  resolved = resolve_slug(title, slug)
   if gift_number is not None:
     num_str = str(gift_number).strip().lstrip("#")
-    if num_str.isdigit() and resolved:
-      return f"https://t.me/nft/{resolved}-{num_str}"
-
-  if resolved:
-    return f"https://t.me/nft/{resolved}"
+    if num_str.isdigit() and int(num_str) > 0:
+      resolved = resolve_slug(title, slug)
+      if resolved:
+        return f"https://t.me/nft/{resolved}-{num_str}"
 
   return DEFAULT_MARKET_URL
 
@@ -448,7 +446,7 @@ def _format_gift_entry(r: dict) -> str:
   ton_val = r.get("ton")
   ton_str = f"{float(ton_val):g} TON" if ton_val is not None else "غير محدد"
   s = f"{r['title']}: السعر {ton_str}"
-  if r.get("gift_number") is not None:
+  if r.get("gift_number") is not None and int(r["gift_number"]) > 0:
     s += f" | رقم #{r['gift_number']}"
   if r.get("floor_price") is not None:
     s += f" | فلور {r['floor_price']} TON"
@@ -464,7 +462,7 @@ def _format_gift_entry(r: dict) -> str:
 
 
 def get_relevant_gifts_summary(user_text: str) -> str:
-  """يرسل ملخصاً غنياً بالتفاصيل للكولكشنز المطابقة لتسهيل عرض السعر والمعلومات داخل البوت."""
+  """يرسل ملخصاً من قاعدة البيانات للكولكشنز المطابقة أو الأعلى سعراً."""
   rows = get_all_gifts_rows()
   if not rows:
     return "لا توجد هدايا مسجلة."
@@ -494,7 +492,9 @@ def get_db_status_report() -> str:
   """يعرض تقريراً سريعاً للأدمن عن حالة قاعدة البيانات وآخر مزامنة."""
   rows = refresh_gifts_cache(force=True)
   total = len(rows)
-  with_nums = sum(1 for r in rows if r.get("gift_number") is not None)
+  with_nums = sum(
+      1 for r in rows if r.get("gift_number") is not None and int(r["gift_number"]) > 0
+  )
   top_names = ", ".join(r.get("title", "") for r in rows[:5] if r.get("title"))
   last_sync = _SYNC_STATUS["last_sync_at"] or "لم تتم مزامنة بعد في هذه الدورة"
   last_count = _SYNC_STATUS["last_synced_count"]
@@ -502,8 +502,8 @@ def get_db_status_report() -> str:
   last_err = _SYNC_STATUS["last_error"]
   lines = [
       "حالة قاعدة البيانات والمزامنة:",
-      f"- إجمالي الهدايا/الكولكشنز المحفوظة: {total} (لديها أرقام هدايا: {with_nums})",
-      f"- آخر مزامنة: {last_sync} (كولكشنز: {last_count} | أرقام مجمّعة: {last_nums})",
+      f"- إجمالي الهدايا/الكولكشنز المحفوظة: {total} (أرقام مؤكدة: {with_nums})",
+      f"- آخر مزامنة: {last_sync} (كولكشنز: {last_count} | أرقام مؤكدة: {last_nums})",
       f"- الفاصل الزمني للمزامنة: {SYNC_EVERY} ثانية (~{SYNC_EVERY // 60} دقيقة)",
       f"- أبرز الأسماء المسجلة: {top_names or 'لا يوجد'}",
   ]
@@ -639,7 +639,7 @@ def restore_mrkt_session_from_env():
 
 
 def save_collection_price(name, title, floor_ton, gift_number=None, conn=None):
-  """يحفظ/يحدّث سعر الكولكشن ورقم الهدية ويبني رابطها تلقائياً."""
+  """يحفظ/يحدّث سعر الكولكشن ويبني رابطها بأمان."""
   clean_title = (title or name or "").strip()
   slug = normalize_slug(name or "") or normalize_slug(clean_title)
   if not slug or floor_ton is None or floor_ton <= 0:
@@ -682,152 +682,6 @@ def save_collection_price(name, title, floor_ton, gift_number=None, conn=None):
     conn.close()
 
 
-def _extract_gift_number_deep(obj, depth: int = 0) -> Optional[int]:
-  """يبحث بعمق في الكائنات أو القواميس أو النصوص عن رقم هدية صالح."""
-  if obj is None or depth > 3:
-    return None
-
-  if isinstance(obj, str):
-    url_m = re.search(r"t\.me/nft/[A-Za-z0-9_]+-(\d{1,9})", obj, re.IGNORECASE)
-    if url_m:
-      return int(url_m.group(1))
-    hash_m = re.search(r"#\s*(\d{1,9})\b", obj)
-    if hash_m:
-      return int(hash_m.group(1))
-    return None
-
-  if isinstance(obj, dict):
-    for key in (
-        "gift_number",
-        "giftNumber",
-        "gift_num",
-        "giftNum",
-        "number",
-        "num",
-        "serial",
-        "serial_number",
-        "serialNumber",
-        "token_id",
-        "tokenId",
-        "url",
-        "link",
-        "slug",
-        "name",
-        "title",
-    ):
-      if key in obj:
-        val = obj[key]
-        if isinstance(val, int) and val > 0:
-          return val
-        found = _extract_gift_number_deep(val, depth + 1)
-        if found is not None:
-          return found
-    for val in obj.values():
-      if isinstance(val, (dict, list, str)):
-        found = _extract_gift_number_deep(val, depth + 1)
-        if found is not None:
-          return found
-    return None
-
-  if isinstance(obj, (list, tuple)):
-    for item in obj[:5]:
-      found = _extract_gift_number_deep(item, depth + 1)
-      if found is not None:
-        return found
-    return None
-
-  for attr in (
-      "gift_number",
-      "giftNumber",
-      "gift_num",
-      "giftNum",
-      "number",
-      "num",
-      "serial",
-      "serial_number",
-      "serialNumber",
-      "token_id",
-      "tokenId",
-      "url",
-      "link",
-      "slug",
-      "name",
-      "title",
-  ):
-    if hasattr(obj, attr):
-      val = getattr(obj, attr, None)
-      if isinstance(val, int) and val > 0:
-        return val
-      found = _extract_gift_number_deep(val, depth + 1)
-      if found is not None:
-        return found
-
-  if hasattr(obj, "model_dump"):
-    try:
-      return _extract_gift_number_deep(obj.model_dump(), depth + 1)
-    except Exception:
-      pass
-
-  return None
-
-
-async def _fetch_sample_gift_number(mc, col) -> Optional[int]:
-  """يجلب رقم هدية للكولكشن مباشرة من كائن الكولكشن أو عبر دوال MarketClient."""
-  direct_num = _extract_gift_number_deep(col)
-  if direct_num is not None:
-    return direct_num
-
-  if not FETCH_GIFT_NUMBERS:
-    return None
-
-  col_name = getattr(col, "name", "") or getattr(col, "title", "") or ""
-  col_slug = normalize_slug(col_name)
-  method_names = [
-      name
-      for name in dir(mc)
-      if not name.startswith("_")
-      and callable(getattr(mc, name, None))
-      and any(
-          kw in name.lower()
-          for kw in ("gift", "listing", "item", "offer", "market", "collection")
-      )
-      and name != "get_collections"
-  ]
-
-  for m_name in method_names[:8]:
-    fn = getattr(mc, m_name, None)
-    if not callable(fn):
-      continue
-    try:
-      sig = inspect.signature(fn)
-      params = sig.parameters
-      kwargs = {}
-      for l_key in ("limit", "count", "page_size", "take"):
-        if l_key in params:
-          kwargs[l_key] = 5
-          break
-      for key in (
-          "collection",
-          "collection_name",
-          "collection_slug",
-          "slug",
-          "name",
-          "gift_name",
-          "title",
-      ):
-        if key in params:
-          kwargs[key] = col_name or col_slug
-          break
-
-      res = await fn(**kwargs) if kwargs else await fn()
-      found = _extract_gift_number_deep(res)
-      if found is not None:
-        return found
-    except Exception:
-      continue
-  return None
-
-
 async def sync_prices_from_mrkt() -> int:
   global _LOGGED_AMRKT_METHODS
   if not (API_ID_ENV.isdigit() and API_HASH_ENV):
@@ -841,7 +695,9 @@ async def sync_prices_from_mrkt() -> int:
     ) as mc:
       if not _LOGGED_AMRKT_METHODS:
         public_methods = [
-            m for m in dir(mc) if not m.startswith("_") and callable(getattr(mc, m, None))
+            m
+            for m in dir(mc)
+            if not m.startswith("_") and callable(getattr(mc, m, None))
         ]
         print("دوال MarketClient المتاحة:", public_methods)
         _LOGGED_AMRKT_METHODS = True
@@ -853,12 +709,8 @@ async def sync_prices_from_mrkt() -> int:
         _SYNC_STATUS["last_error"] = str(e)
         return 0
 
-      if cols:
-        print("مثال من MRKT:", cols[0])
-
       conn = sqlite3.connect(DB_PATH)
       count = 0
-      numbers_found = 0
       try:
         for c in cols:
           if getattr(c, "is_hidden", False):
@@ -869,27 +721,27 @@ async def sync_prices_from_mrkt() -> int:
             if isinstance(floor_nano, (int, float)) and floor_nano > 0:
               floor_ton = floor_nano / 1e9
           if floor_ton is not None and floor_ton > 0:
-            gift_num = await _fetch_sample_gift_number(mc, c)
-            if gift_num is not None:
-              numbers_found += 1
             save_collection_price(
                 getattr(c, "name", ""),
                 getattr(c, "title", ""),
                 floor_ton,
-                gift_number=gift_num,
+                gift_number=None,
                 conn=conn,
             )
             count += 1
-            if FETCH_GIFT_NUMBERS:
-              await asyncio.sleep(0.05)
         conn.commit()
       finally:
         conn.close()
 
     refresh_gifts_cache(force=True)
+    confirmed_nums = sum(
+        1
+        for r in _GIFTS_CACHE["rows"]
+        if r.get("gift_number") is not None and int(r["gift_number"]) > 0
+    )
     _SYNC_STATUS["last_sync_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     _SYNC_STATUS["last_synced_count"] = count
-    _SYNC_STATUS["last_numbers_count"] = numbers_found
+    _SYNC_STATUS["last_numbers_count"] = confirmed_nums
     _SYNC_STATUS["last_error"] = None
     return count
   except Exception as e:
@@ -901,10 +753,7 @@ async def mrkt_sync_loop():
   while True:
     try:
       n = await sync_prices_from_mrkt()
-      print(
-          f"تمت مزامنة {n} كولكشن من MRKT (أرقام هدايا مجمّعة:"
-          f" {_SYNC_STATUS['last_numbers_count']})"
-      )
+      print(f"تمت مزامنة {n} كولكشن من MRKT")
     except Exception as e:
       print(f"فشل مزامنة MRKT: {e}")
     await asyncio.sleep(SYNC_EVERY)
@@ -1384,10 +1233,7 @@ async def handle_user_message(message: types.Message):
       return
     try:
       n = await sync_prices_from_mrkt()
-      await message.answer(
-          f"تمت مزامنة {n} كولكشن من MRKT (أرقام هدايا مجمّعة:"
-          f" {_SYNC_STATUS['last_numbers_count']})."
-      )
+      await message.answer(f"تمت مزامنة {n} كولكشن من MRKT.")
     except Exception as e:
       await message.answer(f"فشل المزامنة: {e}")
     return
