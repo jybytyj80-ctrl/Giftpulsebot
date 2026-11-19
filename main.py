@@ -9,6 +9,7 @@ from groq import Groq
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL")
+DEVELOPER_USERNAME = "vvopnm8"
 
 if not TELEGRAM_BOT_TOKEN or not GROQ_API_KEY:
     raise ValueError("Missing TELEGRAM_BOT_TOKEN or GROQ_API_KEY in Railway Variables")
@@ -18,7 +19,6 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# عدّل أو أضف هنا مباشرة عند الحاجة (الاسم والسعر بالنجوم فقط)
 MRKT_GIFTS = [
     {"title": "آيس كريم مخروطي", "stars": 300},
     {"title": "نودلز", "stars": 438},
@@ -34,15 +34,15 @@ MRKT_GIFTS = [
 ]
 
 EXPERT_SYSTEM_PROMPT = """
-You are "Giftpulse", a specialized expert on Telegram Gifts, Telegram Stars, and the MRKT marketplace.
+You are "Giftpulse", a specialized expert on Telegram Gifts, Telegram Stars, collectible attributes (model, backdrop, symbol), and the MRKT marketplace.
 
-MARKET TERMS (follow the user's exact definitions):
-- الكويك / الكويك سيل (Quick / Quick Sell): عرض الهدية بسعر أقل من قيمتها للبيع الفوري السريع، مثلاً هدية قيمتها 12 TON تعرضها بـ 10 TON لتتباع فوراً.
-- الفلور (Floor): أقصى سعر وصلت له الهدية.
+MARKET TERMS (follow exact MRKT trading logic):
+- الكويك / البيع الفوري (Quick / Quick sell): سعر البيع الفوري المباشر في السوق، ويكون عادةً أقل بنسبة بسيطة من الأرضية/الفلور لإتمام البيع فوراً، مثل بيع فوري عند 13.30 بينما الأرضية للموديل 13.81 (أقل بـ 4%).
+- الفلور / الأرضية: سعر الأرضية للموديل أو الهدية في السوق (مثل 13.81 في مثال الموديل)، وهو المرجع الأساسي قبل خصم نسبة البيع الفوري.
 
 STRICT RULES:
 1. NEVER use ** or markdown asterisks. Plain clean text only.
-2. Keep every reply short (1 to 3 concise lines), clear, and practical.
+2. Keep every reply short (1 to 3 concise lines), accurate, and practical with a simple example when helpful.
 3. Answer ONLY about Telegram Gifts, Telegram Stars, collectibles, MRKT marketplace, and Telegram features. If outside this scope, reply in one short plain line:
    هذا البوت مخصص لهدايا تيليجرام والنجوم وسوق MRKT.
 4. Never include links in normal replies. Match the user's language.
@@ -98,7 +98,11 @@ def extract_buy_budget(text: str):
 @dp.message(lambda message: message.text and message.text.startswith('/start'))
 async def cmd_start(message: types.Message):
     user_conversations.pop(message.from_user.id, None)
-    await message.answer("Giftpulse ⚡ خبير هدايا تيليجرام والنجوم وسوق MRKT.")
+    start_text = (
+        "اهلاً بك عزيزي معك البوت Giftpulse مختص بهدايا تيليجرام ومايدور حول تيليجرام فقط.\n"
+        f"المطور: @{DEVELOPER_USERNAME}"
+    )
+    await message.answer(start_text, disable_web_page_preview=True)
 
 
 @dp.message()
