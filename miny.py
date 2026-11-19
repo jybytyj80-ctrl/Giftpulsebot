@@ -40,7 +40,7 @@ API_PORT = int(os.getenv("PORT", "8080"))
 MRKT_SESSION_DIR = os.getenv("MRKT_SESSION_DIR", ".").strip()
 MRKT_SESSION_B64 = os.getenv("MRKT_SESSION_B64", "").strip()
 SYNC_EVERY = int(os.getenv("SYNC_EVERY_SECONDS", "300"))
-FETCH_GIFT_NUMBERS = os.getenv("FETCH_GIFT_NUMBERS", "0").strip().lower() in (
+FETCH_GIFT_NUMBERS = os.getenv("FETCH_GIFT_NUMBERS", "1").strip().lower() in (
     "1",
     "true",
     "yes",
@@ -276,7 +276,7 @@ EXPERT_SYSTEM_PROMPT = """
 You are "Giftpulse", an expert advisor on Telegram Gifts, Telegram Stars, collectible attributes (Model, Backdrop, Symbol), and trading in the MRKT marketplace.
 
 STRICT RULES:
-1. Keep replies VERY SHORT (maximum 2 concise lines). Include the exact price/floor/quick/model details provided in the database entries when answering about a collection.
+1. Keep replies VERY SHORT (maximum 2 concise lines). Include the exact price/floor/quick/model/number details provided in the database entries when answering about a collection.
 2. NEVER invent NFT gift numbers (#...) if a gift number is not explicitly given in the database entry. Only mention a number if it is explicitly shown in the database entry.
 3. NEVER say "لا يمكنني عرض روابط" or "لا أستطيع إرسال روابط". Gift names in replies are automatically turned into clickable links by the bot, and there is a "فتح سوق MRKT" button below.
 4. Never use ** or markdown asterisks. Plain text only.
@@ -358,10 +358,12 @@ def resolve_slug(title: str, explicit_slug=None) -> str:
 def build_auto_gift_url(
     title: str, gift_number=None, explicit_url=None, slug=None
 ) -> str:
-  """يبني رابط NFT فقط إذا وُجد رقم هدية مؤكد أو رابط NFT صريح؛ وإلا يوجّه إلى سوق MRKT."""
+  """يبني رابط NFT إذا وُجد رقم هدية مؤكد أو رابط NFT صريح؛ وإلا يوجّه إلى سوق MRKT."""
   if explicit_url and explicit_url.strip():
     clean_url = explicit_url.strip()
-    if re.search(r"https?://t\.me/nft/[A-Za-z0-9_]+-\d+", clean_url, re.IGNORECASE):
+    if re.search(
+        r"https?://t\.me/nft/[A-Za-z0-9_]+-\d+", clean_url, re.IGNORECASE
+    ):
       return clean_url
 
   if gift_number is not None:
@@ -639,7 +641,7 @@ def restore_mrkt_session_from_env():
 
 
 def save_collection_price(name, title, floor_ton, gift_number=None, conn=None):
-  """يحفظ/يحدّث سعر الكولكشن ويبني رابطها بأمان."""
+  """يحفظ/يحدّث سعر الكولكشن ورقم الهدية ويبني رابطها بأمان."""
   clean_title = (title or name or "").strip()
   slug = normalize_slug(name or "") or normalize_slug(clean_title)
   if not slug or floor_ton is None or floor_ton <= 0:
@@ -682,6 +684,87 @@ def save_collection_price(name, title, floor_ton, gift_number=None, conn=None):
     conn.close()
 
 
+def _parse_gift_slug_and_number(gift_obj) -> Optional[int]:
+  """يستخرج رقم الهدية الحقيقي من حقل name مثل ResistanceDog-18222."""
+  if gift_obj is None:
+    return None
+  raw_name = (
+      gift_obj.get("name")
+      if isinstance(gift_obj, dict)
+      else getattr(gift_obj, "name", None)
+  )
+  if isinstance(raw_name, str) and raw_name.strip():
+    m = re.search(r"-(\d{1,9})$", raw_name.strip())
+    if m:
+      num = int(m.group(1))
+      if num > 0:
+        return num
+  return None
+
+
+async def _fetch_gift_number_via_search(mc, col) -> Optional[int]:
+  """يستخدم mc.search_gifts لجلب هدية حقيقية للكولكشن واستخراج رقمها من name."""
+  if not FETCH_GIFT_NUMBERS:
+    return None
+
+  fn = getattr(mc, "search_gifts", None)
+  if not callable(fn):
+    return None
+
+  col_name = (getattr(col, "name", "") or "").strip()
+  col_title = (getattr(col, "title", "") or "").strip()
+  col_slug = normalize_slug(col_name or col_title)
+
+  try:
+    sig = inspect.signature(fn)
+    params = sig.parameters
+  except Exception:
+    params = {}
+
+  queries = [q for q in (col_name, col_title, col_slug) if q]
+  seen_q = set()
+  for q in queries:
+    if q.lower() in seen_q:
+      continue
+    seen_q.add(q.lower())
+
+    kwargs = {}
+    for key in ("name", "title", "collection", "collection_name", "slug", "query", "search"):
+      if key in params:
+        kwargs[key] = q
+        break
+    for l_key in ("limit", "count", "page_size"):
+      if l_key in params:
+        kwargs[l_key] = 3
+        break
+
+    try:
+      res = await fn(**kwargs) if kwargs else await fn(q)
+      items = []
+      if isinstance(res, list):
+        items = res
+      elif isinstance(res, dict):
+        for k in ("items", "gifts", "results", "data"):
+          if isinstance(res.get(k), list):
+            items = res[k]
+            break
+      else:
+        for attr in ("items", "gifts", "results", "data"):
+          val = getattr(res, attr, None)
+          if isinstance(val, list):
+            items = val
+            break
+
+      for item in items:
+        g_num = _parse_gift_slug_and_number(item)
+        if g_num is not None:
+          return g_num
+    except Exception:
+      continue
+
+  return None
+
+
 async def sync_prices_from_mrkt() -> int:
   global _LOGGED_AMRKT_METHODS
   if not (API_ID_ENV.isdigit() and API_HASH_ENV):
@@ -711,6 +794,7 @@ async def sync_prices_from_mrkt() -> int:
 
       conn = sqlite3.connect(DB_PATH)
       count = 0
+      numbers_found = 0
       try:
         for c in cols:
           if getattr(c, "is_hidden", False):
@@ -721,14 +805,19 @@ async def sync_prices_from_mrkt() -> int:
             if isinstance(floor_nano, (int, float)) and floor_nano > 0:
               floor_ton = floor_nano / 1e9
           if floor_ton is not None and floor_ton > 0:
+            gift_num = await _fetch_gift_number_via_search(mc, c)
+            if gift_num is not None:
+              numbers_found += 1
             save_collection_price(
                 getattr(c, "name", ""),
                 getattr(c, "title", ""),
                 floor_ton,
-                gift_number=None,
+                gift_number=gift_num,
                 conn=conn,
             )
             count += 1
+            if FETCH_GIFT_NUMBERS:
+              await asyncio.sleep(0.08)
         conn.commit()
       finally:
         conn.close()
@@ -741,7 +830,7 @@ async def sync_prices_from_mrkt() -> int:
     )
     _SYNC_STATUS["last_sync_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     _SYNC_STATUS["last_synced_count"] = count
-    _SYNC_STATUS["last_numbers_count"] = confirmed_nums
+    _SYNC_STATUS["last_numbers_count"] = max(numbers_found, confirmed_nums)
     _SYNC_STATUS["last_error"] = None
     return count
   except Exception as e:
@@ -753,7 +842,9 @@ async def mrkt_sync_loop():
   while True:
     try:
       n = await sync_prices_from_mrkt()
-      print(f"تمت مزامنة {n} كولكشن من MRKT")
+      print(
+          f"تمت مزامنة {n} كولكشن من MRKT (أرقام هدايا: {_SYNC_STATUS['last_numbers_count']})"
+      )
     except Exception as e:
       print(f"فشل مزامنة MRKT: {e}")
     await asyncio.sleep(SYNC_EVERY)
@@ -784,49 +875,20 @@ async def inspect_amrkt_capabilities() -> str:
         elif hasattr(first, "__dict__"):
           sample_fields = list(first.__dict__.keys())
 
-      gift_methods = [
-          m
-          for m in methods
-          if m != "get_collections"
-          and any(
-              k in m.lower()
-              for k in ("gift", "listing", "item", "offer", "market", "search")
-          )
-      ]
-      test_results = []
-      sample_col_name = getattr(cols[0], "name", "") if cols else ""
-      for m_name in gift_methods[:6]:
-        fn = getattr(mc, m_name)
+      search_sample = ""
+      if hasattr(mc, "search_gifts"):
         try:
-          sig = inspect.signature(fn)
-          params = sig.parameters
-          kwargs = {}
-          if "limit" in params:
-            kwargs["limit"] = 2
-          for key in ("collection", "collection_name", "slug", "name", "query"):
-            if key in params and sample_col_name:
-              kwargs[key] = sample_col_name
-              break
-          res = await fn(**kwargs) if kwargs else await fn()
-          r_len = (
-              len(res)
-              if isinstance(res, (list, tuple, dict))
-              else type(res).__name__
-          )
-          r_sample = (
-              str(res[0])[:120]
-              if isinstance(res, list) and res
-              else str(res)[:120]
-          )
-          test_results.append(f"{m_name} -> ({r_len}): {r_sample}")
+          g_res = await mc.search_gifts(limit=2)
+          items = getattr(g_res, "items", None) or []
+          if items:
+            search_sample = f"search_gifts -> أول هدية: {getattr(items[0], 'name', items[0])}"
         except Exception as e:
-          test_results.append(f"{m_name} -> خطأ: {e}")
+          search_sample = f"search_gifts -> خطأ: {e}"
 
       lines = [
-          f"دوال MarketClient ({len(methods)}): {', '.join(methods[:20])}",
-          f"حقول أول كولكشن: {', '.join(sample_fields[:20]) or 'غير ظاهرة'}",
-          "اختبار دوال الهدايا/العروض:",
-          *(test_results or ["لا توجد دوال إضافية مطابقة"]),
+          f"دوال MarketClient ({len(methods)}): {', '.join(methods)}",
+          f"حقول أول كولكشن: {', '.join(sample_fields) or 'غير ظاهرة'}",
+          search_sample or "لا توجد عينة من search_gifts",
       ]
       return "\n".join(lines)[:3800]
   except Exception as e:
@@ -1307,7 +1369,10 @@ async def handle_user_message(message: types.Message):
       return
     try:
       n = await sync_prices_from_mrkt()
-      await message.answer(f"تمت مزامنة {n} كولكشن من MRKT.")
+      await message.answer(
+          f"تمت مزامنة {n} كولكشن من MRKT (أرقام هدايا:"
+          f" {_SYNC_STATUS['last_numbers_count']})."
+      )
     except Exception as e:
       await message.answer(f"فشل المزامنة: {e}")
     return
