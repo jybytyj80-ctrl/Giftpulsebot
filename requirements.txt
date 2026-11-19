@@ -2,3 +2,4 @@ aiogram
 groq
 telethon
 amrkt
+pillow
