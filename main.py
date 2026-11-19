@@ -64,21 +64,15 @@ INITIAL_GIFTS = [
 ]
 
 EXPERT_SYSTEM_PROMPT = """
-You are "Giftpulse", an expert advisor on Telegram Gifts, Telegram Stars, collectible attributes (Model, Backdrop, Symbol), and trading in the MRKT marketplace.
+You are "Giftpulse", a sharp Telegram Gifts and MRKT market expert.
 
-CORE TRADING & MARKET RULES:
-1. MRKT prices are denominated in TON (e.g., 5 TON / 5t). Never convert TON into thousands of Stars or treat TON as random points.
-2. Floor price (الفلور / الأرضية): reference market floor price for a gift or model before quick-sell discount.
-3. Quick sell (الكويك / البيع الفوري): instant sale price, usually slightly below floor for fast liquidity (e.g., 13.30 quick vs 13.81 floor).
-4. Collectible value depends heavily on Model, Backdrop, and Symbol rarity, plus supply/liquidity.
-5. Never invent fake live prices or fake NFT numbers that are not in the provided database context. If a user asks for a budget higher than available items in the database, state clearly what is in the database and advise on how to allocate or check MRKT directly.
-
-STYLE RULES:
-- Never use ** or markdown asterisks. Clean plain text only.
-- Give practical, sharp, expert advice (2 to 5 clear lines) tailored to what the user asked.
-- Answer ONLY about Telegram Gifts, Telegram Stars, collectibles, MRKT marketplace, and Telegram features. If outside this scope, reply in one short line:
-  هذا البوت مخصص لهدايا تيليجرام والنجوم وسوق MRKT.
-- Match the user's language and dialect naturally while staying clear and accurate.
+STRICT RULES:
+1. Keep replies VERY SHORT (maximum 2 to 3 concise lines). No long paragraphs or unnecessary chatter.
+2. Never use ** or markdown asterisks. Plain text only.
+3. Prices in MRKT are in TON (not thousands of Stars). Floor = market floor price; Quick = instant sale price (slightly below floor).
+4. Mention only relevant gifts from the provided database context without inventing fake numbers or live prices.
+5. Answer ONLY about Telegram Gifts, Telegram Stars, collectibles, and MRKT. Outside scope: reply in one short line:
+   هذا البوت مخصص لهدايا تيليجرام والنجوم وسوق MRKT.
 """
 
 user_conversations = {}
@@ -146,25 +140,26 @@ def build_nft_link(title: str, gift_number=None, explicit_url=None, slug=None) -
     return DEFAULT_MARKET_URL
 
 
-def get_all_gifts_summary() -> str:
+def get_all_gifts_rows():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    cur.execute("SELECT title, ton, stars, floor_price, quick_price, gift_number FROM gifts ORDER BY ton ASC")
+    cur.execute("SELECT title, slug, ton, stars, floor_price, quick_price, gift_number, custom_url FROM gifts ORDER BY ton DESC")
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
+    return rows
 
+
+def get_all_gifts_summary() -> str:
+    rows = get_all_gifts_rows()
     if not rows:
-        return "لا توجد هدايا مسجلة في قاعدة البيانات حالياً."
-
+        return "لا توجد هدايا مسجلة."
     parts = []
     for r in rows:
-        item_str = f"{r['title']}: {r['ton']:g} TON"
+        s = f"{r['title']}: {r['ton']:g} TON"
         if r.get("floor_price") is not None and r.get("quick_price") is not None:
-            item_str += f" (فلور {r['floor_price']} / كويك {r['quick_price']})"
-        if r.get("gift_number") is not None:
-            item_str += f" [#{r['gift_number']}]"
-        parts.append(item_str)
+            s += f" (فلور {r['floor_price']} / كويك {r['quick_price']})"
+        parts.append(s)
     return " | ".join(parts)
 
 
@@ -391,6 +386,25 @@ def handle_admin_update(user_text: str):
     return f"تم حفظ وتحديث بيانات {title} في قاعدة البيانات."
 
 
+def linkify_gifts_in_reply(ai_reply: str) -> str:
+    rows = get_all_gifts_rows()
+    formatted = ai_reply
+    for r in rows:
+        title = r.get("title", "")
+        if not title or title not in formatted:
+            continue
+        gift_url = build_nft_link(
+            title=title,
+            gift_number=r.get("gift_number"),
+            explicit_url=r.get("custom_url"),
+            slug=r.get("slug"),
+        )
+        # لا نلف العنوان إذا كان ملفوفاً مسبقاً بوسم <a
+        pattern = re.compile(rf'(?<!">)(?<!\w){re.escape(title)}(?!</a>)')
+        formatted = pattern.sub(f'<a href="{gift_url}">{title}</a>', formatted, count=1)
+    return formatted
+
+
 @dp.message(lambda message: message.text and message.text.startswith('/start'))
 async def cmd_start(message: types.Message):
     user_conversations.pop(message.from_user.id, None)
@@ -440,27 +454,28 @@ async def handle_user_message(message: types.Message):
         ]
 
     db_snapshot = get_all_gifts_summary()
-    enriched_prompt = f"{user_text}\n\n[بيانات قاعدة البيانات المتاحة حالياً: {db_snapshot}]"
+    enriched_prompt = f"{user_text}\n\n[بيانات قاعدة البيانات: {db_snapshot}]"
 
     user_conversations[user_id].append({"role": "user", "content": enriched_prompt})
-    if len(user_conversations[user_id]) > 7:
-        user_conversations[user_id] = [user_conversations[user_id][0]] + user_conversations[user_id][-6:]
+    if len(user_conversations[user_id]) > 5:
+        user_conversations[user_id] = [user_conversations[user_id][0]] + user_conversations[user_id][-4:]
 
     try:
         model_to_use = get_active_model()
         response = client.chat.completions.create(
             model=model_to_use,
             messages=user_conversations[user_id],
-            temperature=0.25,
-            max_tokens=260,
+            temperature=0.15,
+            max_tokens=110,
         )
         ai_reply = clean_text(response.choices[0].message.content)
         user_conversations[user_id].append({"role": "assistant", "content": ai_reply})
 
+        linked_reply = linkify_gifts_in_reply(ai_reply)
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="فتح سوق MRKT", url=DEFAULT_MARKET_URL)],
         ])
-        await message.answer(ai_reply, reply_markup=kb, disable_web_page_preview=True)
+        await message.answer(linked_reply, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
     except Exception as e:
         print(f"Groq/Bot error: {e}")
         await message.answer("حدث خطأ تقني مؤقت، حاول مجدداً.")
