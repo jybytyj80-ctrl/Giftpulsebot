@@ -57,7 +57,8 @@ async def handle_user_message(message: types.Message):
 
     try:
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="model="llama-3.1-8b-instant",
+",
             messages=user_conversations[user_id],
             temperature=0.3
         )
