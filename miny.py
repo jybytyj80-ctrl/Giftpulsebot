@@ -99,6 +99,7 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 _CACHED_MODEL: Optional[str] = None
+_LOGGED_AMRKT_METHODS = False
 _GIFTS_CACHE = {
     "rows": [],
     "candidates": [],
@@ -681,49 +682,119 @@ def save_collection_price(name, title, floor_ton, gift_number=None, conn=None):
     conn.close()
 
 
-def _extract_gift_number_from_item(item) -> Optional[int]:
-  """يستخرج رقم الهدية/القطعة من كائن أو قاموس أو نص يعود من السوق."""
-  if item is None:
+def _extract_gift_number_deep(obj, depth: int = 0) -> Optional[int]:
+  """يبحث بعمق في الكائنات أو القواميس أو النصوص عن رقم هدية صالح."""
+  if obj is None or depth > 3:
     return None
-  attr_names = (
+
+  if isinstance(obj, str):
+    url_m = re.search(r"t\.me/nft/[A-Za-z0-9_]+-(\d{1,9})", obj, re.IGNORECASE)
+    if url_m:
+      return int(url_m.group(1))
+    hash_m = re.search(r"#\s*(\d{1,9})\b", obj)
+    if hash_m:
+      return int(hash_m.group(1))
+    return None
+
+  if isinstance(obj, dict):
+    for key in (
+        "gift_number",
+        "giftNumber",
+        "gift_num",
+        "giftNum",
+        "number",
+        "num",
+        "serial",
+        "serial_number",
+        "serialNumber",
+        "token_id",
+        "tokenId",
+        "url",
+        "link",
+        "slug",
+        "name",
+        "title",
+    ):
+      if key in obj:
+        val = obj[key]
+        if isinstance(val, int) and val > 0:
+          return val
+        found = _extract_gift_number_deep(val, depth + 1)
+        if found is not None:
+          return found
+    for val in obj.values():
+      if isinstance(val, (dict, list, str)):
+        found = _extract_gift_number_deep(val, depth + 1)
+        if found is not None:
+          return found
+    return None
+
+  if isinstance(obj, (list, tuple)):
+    for item in obj[:5]:
+      found = _extract_gift_number_deep(item, depth + 1)
+      if found is not None:
+        return found
+    return None
+
+  for attr in (
       "gift_number",
       "giftNumber",
+      "gift_num",
+      "giftNum",
       "number",
       "num",
-      "index",
+      "serial",
+      "serial_number",
+      "serialNumber",
       "token_id",
       "tokenId",
+      "url",
+      "link",
       "slug",
       "name",
       "title",
-  )
-  for attr in attr_names:
-    val = item.get(attr) if isinstance(item, dict) else getattr(item, attr, None)
-    if isinstance(val, int) and val > 0:
-      return val
-    if isinstance(val, str):
-      m = re.search(r"#?(\d{1,9})\b", val)
-      if m:
-        return int(m.group(1))
+  ):
+    if hasattr(obj, attr):
+      val = getattr(obj, attr, None)
+      if isinstance(val, int) and val > 0:
+        return val
+      found = _extract_gift_number_deep(val, depth + 1)
+      if found is not None:
+        return found
+
+  if hasattr(obj, "model_dump"):
+    try:
+      return _extract_gift_number_deep(obj.model_dump(), depth + 1)
+    except Exception:
+      pass
+
   return None
 
 
 async def _fetch_sample_gift_number(mc, col) -> Optional[int]:
-  """يحاول جلب رقم هدية واحدة من السوق للكولكشن عبر الدوال المتاحة في MarketClient."""
+  """يجلب رقم هدية للكولكشن مباشرة من كائن الكولكشن أو عبر دوال MarketClient."""
+  direct_num = _extract_gift_number_deep(col)
+  if direct_num is not None:
+    return direct_num
+
   if not FETCH_GIFT_NUMBERS:
     return None
 
   col_name = getattr(col, "name", "") or getattr(col, "title", "") or ""
   col_slug = normalize_slug(col_name)
-  method_names = (
-      "get_gifts",
-      "get_listings",
-      "get_collection_gifts",
-      "get_collection_listings",
-      "get_market_gifts",
-  )
+  method_names = [
+      name
+      for name in dir(mc)
+      if not name.startswith("_")
+      and callable(getattr(mc, name, None))
+      and any(
+          kw in name.lower()
+          for kw in ("gift", "listing", "item", "offer", "market", "collection")
+      )
+      and name != "get_collections"
+  ]
 
-  for m_name in method_names:
+  for m_name in method_names[:8]:
     fn = getattr(mc, m_name, None)
     if not callable(fn):
       continue
@@ -731,39 +802,34 @@ async def _fetch_sample_gift_number(mc, col) -> Optional[int]:
       sig = inspect.signature(fn)
       params = sig.parameters
       kwargs = {}
-      if "limit" in params:
-        kwargs["limit"] = 5
-      for key in ("collection", "collection_name", "slug", "name", "gift_name"):
+      for l_key in ("limit", "count", "page_size", "take"):
+        if l_key in params:
+          kwargs[l_key] = 5
+          break
+      for key in (
+          "collection",
+          "collection_name",
+          "collection_slug",
+          "slug",
+          "name",
+          "gift_name",
+          "title",
+      ):
         if key in params:
           kwargs[key] = col_name or col_slug
           break
 
       res = await fn(**kwargs) if kwargs else await fn()
-      items = []
-      if isinstance(res, list):
-        items = res
-      elif isinstance(res, dict):
-        for k in ("items", "gifts", "listings", "data", "results"):
-          if isinstance(res.get(k), list):
-            items = res[k]
-            break
-      else:
-        for attr in ("items", "gifts", "listings", "data", "results"):
-          val = getattr(res, attr, None)
-          if isinstance(val, list):
-            items = val
-            break
-
-      for it in items:
-        g_num = _extract_gift_number_from_item(it)
-        if g_num is not None:
-          return g_num
+      found = _extract_gift_number_deep(res)
+      if found is not None:
+        return found
     except Exception:
       continue
   return None
 
 
 async def sync_prices_from_mrkt() -> int:
+  global _LOGGED_AMRKT_METHODS
   if not (API_ID_ENV.isdigit() and API_HASH_ENV):
     raise RuntimeError("TG_API_ID / TG_API_HASH غير مكتملة.")
   try:
@@ -773,6 +839,13 @@ async def sync_prices_from_mrkt() -> int:
         session_name="mrkt",
         workdir=MRKT_SESSION_DIR,
     ) as mc:
+      if not _LOGGED_AMRKT_METHODS:
+        public_methods = [
+            m for m in dir(mc) if not m.startswith("_") and callable(getattr(mc, m, None))
+        ]
+        print("دوال MarketClient المتاحة:", public_methods)
+        _LOGGED_AMRKT_METHODS = True
+
       try:
         cols = await mc.get_collections()
       except Exception as e:
