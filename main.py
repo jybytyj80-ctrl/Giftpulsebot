@@ -67,11 +67,12 @@ EXPERT_SYSTEM_PROMPT = """
 You are "Giftpulse", an expert advisor on Telegram Gifts, Telegram Stars, collectible attributes (Model, Backdrop, Symbol), and trading in the MRKT marketplace.
 
 STRICT RULES:
-1. Keep replies VERY SHORT (maximum 2 to 3 concise lines). No long paragraphs or unnecessary chatter.
-2. Never use ** or markdown asterisks. Plain text only.
-3. Prices in MRKT are in TON (not thousands of Stars). Floor = market floor price; Quick = instant sale price (slightly below floor).
-4. Never invent fake prices or fake NFT numbers. Base your answer on the database entries provided; if a user asks about high budgets or live MRKT items not in the database, state clearly that they should check MRKT directly.
-5. Answer ONLY about Telegram Gifts, Telegram Stars, collectibles, and MRKT. Outside scope: reply in one short line:
+1. Keep replies VERY SHORT (maximum 2 concise lines). No long paragraphs or filler.
+2. NEVER say "لا يمكنني عرض روابط" or "لا أستطيع إرسال روابط". Gift names in replies are automatically turned into clickable links by the bot, and there is a "فتح سوق MRKT" button below.
+3. Never use ** or markdown asterisks. Plain text only.
+4. Prices in MRKT are in TON (not thousands of Stars). Floor = floor price; Quick = instant sale price (slightly below floor).
+5. Never invent fake prices or fake NFT numbers. Base your answer on the database entries provided; for high budgets not in the database, advise checking MRKT directly.
+6. Answer ONLY about Telegram Gifts, Telegram Stars, collectibles, and MRKT. Outside scope: reply in one short line:
    هذا البوت مخصص لهدايا تيليجرام والنجوم وسوق MRKT.
 """
 
@@ -297,7 +298,6 @@ async def sync_mrkt_via_secondary_account() -> str:
                                 elif "t.me/mrkt" in btn_url:
                                     app_links_found += 1
 
-                # استخراج أي هدية ورقم يظهران في نص الرسالة لتحديث قاعدة البيانات تلقائياً
                 for nft_match in re.finditer(r"https?://t\.me/nft/([A-Za-z0-9_]+)-(\d+)", text):
                     slug_part, num_part = nft_match.group(1), nft_match.group(2)
                     upsert_gift_in_db(
@@ -489,8 +489,9 @@ def linkify_gifts_in_reply(ai_reply: str) -> str:
             explicit_url=r.get("custom_url"),
             slug=r.get("slug"),
         )
-        pattern = re.compile(rf'(?<!">)(?<!\w){re.escape(title)}(?!</a>)')
-        formatted = pattern.sub(f'<a href="{gift_url}">{title}</a>', formatted, count=1)
+        # استبدال مباشر إذا لم يكن مسبوقاً بـ <a href="..."><
+        if f'>{title}</a>' not in formatted:
+            formatted = formatted.replace(title, f'<a href="{gift_url}">{title}</a>', 1)
     return formatted
 
 
