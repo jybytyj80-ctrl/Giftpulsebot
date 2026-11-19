@@ -145,4 +145,23 @@ async def handle_user_message(message: types.Message):
         model_to_use = get_active_model()
         response = client.chat.completions.create(
             model=model_to_use,
-            messages=user_conversations
+            messages=user_conversations[user_id],
+            temperature=0.15,
+            max_tokens=160,
+        )
+        ai_reply = clean_text(response.choices[0].message.content)
+        user_conversations[user_id].append({"role": "assistant", "content": ai_reply})
+        await message.answer(ai_reply, disable_web_page_preview=True)
+    except Exception as e:
+        print(f"Groq/Bot error: {e}")
+        await message.answer("حدث خطأ تقني مؤقت، حاول مجدداً.")
+
+
+async def main():
+    print("Giftpulse Bot is starting...")
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
