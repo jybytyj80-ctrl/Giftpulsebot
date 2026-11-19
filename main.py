@@ -4,10 +4,7 @@ import asyncio
 ‏from aiogram.fsm.storage.memory import MemoryStorage
 ‏from groq import Groq
 ‏
-‏# ضع هنا توكن البوت الذي أخذته من BotFather
 ‏TELEGRAM_BOT_TOKEN = "9169040757:AAEPPnxFAiz_93l-GT6sNn2Txwr0_l9qDYo"
-‏
-‏# ضع هنا مفتاح Groq API الذي أخذته من موقع console.groq.com
 ‏GROQ_API_KEY = "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"
 ‏
 ‏client = Groq(api_key=GROQ_API_KEY)
@@ -26,6 +23,7 @@ import asyncio
 ‏
 ‏user_conversations = {}
 ‏
+‏
 ‏@dp.message(lambda message: message.text and message.text.startswith('/start'))
 ‏async def cmd_start(message: types.Message):
 ‏    welcome_text = (
@@ -33,6 +31,7 @@ import asyncio
 ‏        "أنا مساعدك الخبير والمخصص حصرياً للإجابة عن كل ما يخص **هدايا تيليجرام (Telegram Gifts)**، **النجوم (Stars)**، وأسواقها التحليلية."
 ‏    )
 ‏    await message.answer(welcome_text, parse_mode="Markdown")
+‏
 ‏
 ‏@dp.message()
 ‏async def handle_user_message(message: types.Message):
@@ -61,9 +60,11 @@ import asyncio
 ‏    except Exception as e:
 ‏        await message.answer("عذراً، حدث خطأ تقني مؤقت. يرجى المحاولة مرة أخرى لاحقاً.")
 ‏
+‏
 ‏async def main():
 ‏    print("Giftpulse Bot is starting...")
 ‏    await dp.start_polling(bot)
+‏
 ‏
 ‏if __name__ == "__main__":
 ‏    logging.basicConfig(level=logging.INFO)
