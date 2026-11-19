@@ -1,7 +1,9 @@
 import asyncio
 import os
+import re
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from groq import Groq
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -16,14 +18,18 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
+# ضع هنا الهدايا وروابط Fragment الحقيقية الخاصة بها (وتقدير النجوم للمقارنة)
+FRAGMENT_GIFTS = [
+    # مثال (استبدل الرابط برابط حقيقي من Fragment):
+    # {"title": "اسم الهدية", "stars": 500, "url": "https://fragment.com/gift/..."},
+]
+
 EXPERT_SYSTEM_PROMPT = """
 You are "Giftpulse", an ultra-concise Telegram Gifts & Stars assistant.
-
-STRICT RULES:
-1. **Ultra-Short & Direct:** No long paragraphs, no intros, no "how to buy" steps unless asked. Start directly with "أفضل النتائج:" (or equivalent in the user's language).
-2. **Budget-Matched Items:** List only top gift options/categories matching the requested Stars budget.
-3. **Telegram Links Only When Verified:** Include real Telegram links only when explicitly provided/known (such as https://t.me/mrkt or links shared by the user). NEVER invent or guess gift URLs. If a direct item link isn't available, give the exact item name/filter and https://t.me/mrkt.
-4. **Language Matching:** Match the user's language strictly.
+Reply ONLY in the user's language.
+Start directly with "أفضل النتائج:" (or equivalent).
+When the user asks to buy a gift with Stars, keep the reply very short, mention best matching items, and include verified links (use https://fragment.com when no specific gift URL is in context).
+NEVER invent or guess specific gift URLs.
 """
 
 user_conversations = {}
@@ -56,9 +62,14 @@ def get_active_model() -> str:
     raise RuntimeError(f"No suitable chat model found in: {model_ids}")
 
 
+def extract_budget(text: str):
+    match = re.search(r"\b(\d{2,6})\b", text)
+    return int(match.group(1)) if match else None
+
+
 @dp.message(lambda message: message.text and message.text.startswith('/start'))
 async def cmd_start(message: types.Message):
-    await message.answer("**Giftpulse** ⚡ أرسل ميزانيتك أو سؤالك.", parse_mode="Markdown")
+    await message.answer("**Giftpulse** ⚡ أرسل ميزانيتك بالنجوم.", parse_mode="Markdown")
 
 
 @dp.message()
@@ -68,7 +79,24 @@ async def handle_user_message(message: types.Message):
         return
 
     user_id = message.from_user.id
-    user_text = message.text
+    user_text = message.text.strip()
+
+    budget = extract_budget(user_text)
+    if budget is not None and FRAGMENT_GIFTS:
+        matched = sorted(
+            [g for g in FRAGMENT_GIFTS if g["stars"] <= budget],
+            key=lambda x: x["stars"],
+            reverse=True
+        )[:5]
+        if matched:
+            lines = ["أفضل النتائج:"]
+            buttons = []
+            for item in matched:
+                lines.append(f"• {item['title']} — {item['stars']} ⭐")
+                buttons.append([InlineKeyboardButton(text=f"رابط {item['title']} على Fragment", url=item["url"])])
+            kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+            await message.answer("\n".join(lines), reply_markup=kb, disable_web_page_preview=True)
+            return
 
     if user_id not in user_conversations:
         user_conversations[user_id] = [
@@ -76,7 +104,6 @@ async def handle_user_message(message: types.Message):
         ]
 
     user_conversations[user_id].append({"role": "user", "content": user_text})
-
     if len(user_conversations[user_id]) > 5:
         user_conversations[user_id] = [user_conversations[user_id][0]] + user_conversations[user_id][-4:]
 
@@ -85,12 +112,17 @@ async def handle_user_message(message: types.Message):
         response = client.chat.completions.create(
             model=model_to_use,
             messages=user_conversations[user_id],
-            temperature=0.2,
-            max_tokens=220
+            temperature=0.15,
+            max_tokens=180
         )
         ai_reply = response.choices[0].message.content
         user_conversations[user_id].append({"role": "assistant", "content": ai_reply})
-        await message.answer(ai_reply)
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="فتح Fragment", url="https://fragment.com")],
+            [InlineKeyboardButton(text="هدايا تيليجرام", url="tg://premium_multigift")],
+        ])
+        await message.answer(ai_reply, reply_markup=kb, disable_web_page_preview=True)
     except Exception as e:
         print(f"Groq/Bot error: {e}")
         await message.answer("حدث خطأ تقني مؤقت، حاول مجدداً.")
