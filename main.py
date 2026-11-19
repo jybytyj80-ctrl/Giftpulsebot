@@ -15,8 +15,8 @@ GROQ_MODEL = os.getenv("GROQ_MODEL")
 ADMIN_ID_ENV = os.getenv("ADMIN_ID", "").strip()
 ADMIN_ID = int(ADMIN_ID_ENV) if ADMIN_ID_ENV.isdigit() else None
 
-API_ID_ENV = os.getenv("API_ID", "").strip()
-API_HASH_ENV = os.getenv("API_HASH", "").strip()
+API_ID_ENV = (os.getenv("TG_API_ID") or os.getenv("API_ID") or "").strip()
+API_HASH_ENV = (os.getenv("TG_API_HASH") or os.getenv("API_HASH") or "").strip()
 TG_SESSION_STRING = os.getenv("TG_SESSION_STRING", "").strip()
 MRKT_BOT_USERNAME = os.getenv("MRKT_BOT_USERNAME", "mrkt").strip().lstrip("@")
 MRKT_WEB_URL = os.getenv("MRKT_WEB_URL", "https://t.me/mrkt").strip()
@@ -99,7 +99,7 @@ def get_active_model() -> str:
 
 async def test_mrkt_session() -> str:
     if not (API_ID_ENV.isdigit() and API_HASH_ENV and TG_SESSION_STRING):
-        return "متغيرات الجلسة (API_ID / API_HASH / TG_SESSION_STRING) غير مكتملة."
+        return "متغيرات الجلسة (TG_API_ID / TG_API_HASH / TG_SESSION_STRING) غير مكتملة."
 
     try:
         async with TelegramClient(
