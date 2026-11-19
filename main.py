@@ -5,12 +5,21 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from groq import Groq
+from telethon import TelegramClient
+from telethon.sessions import StringSession
+from telethon.tl.functions.messages import RequestWebViewRequest
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL")
 ADMIN_ID_ENV = os.getenv("ADMIN_ID", "").strip()
 ADMIN_ID = int(ADMIN_ID_ENV) if ADMIN_ID_ENV.isdigit() else None
+
+API_ID_ENV = os.getenv("API_ID", "").strip()
+API_HASH_ENV = os.getenv("API_HASH", "").strip()
+TG_SESSION_STRING = os.getenv("TG_SESSION_STRING", "").strip()
+MRKT_BOT_USERNAME = os.getenv("MRKT_BOT_USERNAME", "mrkt").strip().lstrip("@")
+MRKT_WEB_URL = os.getenv("MRKT_WEB_URL", "https://t.me/mrkt").strip()
 
 DEVELOPER_USERNAME = "vvopnm8"
 DEVELOPER_NAME = "عباس"
@@ -24,7 +33,6 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# كل هدية لها رابط خاص بها (url) يفتح عند الضغط على اسم الهدية في النص
 MRKT_GIFTS = [
     {"title": "آيس كريم مخروطي", "ton": 1.2, "stars": 300, "floor": 1.2, "quick": 1.1, "url": DEFAULT_MARKET_URL},
     {"title": "نودلز", "ton": 1.8, "stars": 438, "floor": 1.8, "quick": 1.7, "url": DEFAULT_MARKET_URL},
@@ -89,6 +97,31 @@ def get_active_model() -> str:
     raise RuntimeError(f"No suitable chat model found in: {model_ids}")
 
 
+async def test_mrkt_session() -> str:
+    if not (API_ID_ENV.isdigit() and API_HASH_ENV and TG_SESSION_STRING):
+        return "متغيرات الجلسة (API_ID / API_HASH / TG_SESSION_STRING) غير مكتملة."
+
+    try:
+        async with TelegramClient(
+            StringSession(TG_SESSION_STRING),
+            int(API_ID_ENV),
+            API_HASH_ENV,
+        ) as tg_client:
+            peer = await tg_client.get_input_entity(MRKT_BOT_USERNAME)
+            webview = await tg_client(
+                RequestWebViewRequest(
+                    peer=peer,
+                    bot=peer,
+                    platform="android",
+                    url=MRKT_WEB_URL,
+                )
+            )
+            has_url = bool(getattr(webview, "url", None))
+            return f"اتصال Telethon بـ MRKT ناجح. تم استلام رابط الجلسة: {'نعم' if has_url else 'لا'}."
+    except Exception as e:
+        return f"فشل اتصال Telethon بـ MRKT: {e}"
+
+
 def extract_buy_budget(text: str):
     low = text.lower().strip()
     buy_keywords = (
@@ -116,7 +149,6 @@ def extract_buy_budget(text: str):
 
 
 def handle_admin_update(user_text: str):
-    # صيغة التحديث: تحديث: اسم الهدية | تون 5.0 | فلور 5.2 | كويك 4.9 | رابط https://...
     raw = user_text.split(":", 1)[1].strip()
     parts = [p.strip() for p in raw.split("|")]
     if not parts or not parts[0]:
@@ -192,6 +224,11 @@ async def handle_user_message(message: types.Message):
 
     user_id = message.from_user.id
     user_text = message.text.strip()
+
+    if user_text == "فحص_الجلسة" and ADMIN_ID is not None and user_id == ADMIN_ID:
+        status_msg = await test_mrkt_session()
+        await message.answer(status_msg, disable_web_page_preview=True)
+        return
 
     if user_text.startswith("تحديث:") and ADMIN_ID is not None and user_id == ADMIN_ID:
         msg = handle_admin_update(user_text)
