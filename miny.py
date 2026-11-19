@@ -195,18 +195,25 @@ def resolve_slug(title: str, explicit_slug=None) -> str:
     return normalize_slug(title)
 
 
-def build_nft_link(title: str, gift_number=None, explicit_url=None, slug=None) -> str:
+def build_auto_gift_url(title: str, gift_number=None, explicit_url=None, slug=None) -> str:
+    """يبني تلقائياً رابط الهدية بناءً على اسمها/الـ slug ورقمها أو رابطها المخصص."""
     if explicit_url and explicit_url.strip():
         return explicit_url.strip()
 
+    resolved = resolve_slug(title, slug)
     if gift_number is not None:
         num_str = str(gift_number).strip().lstrip("#")
-        if num_str.isdigit():
-            resolved = resolve_slug(title, slug)
-            if resolved:
-                return f"https://t.me/nft/{resolved}-{num_str}"
+        if num_str.isdigit() and resolved:
+            return f"https://t.me/nft/{resolved}-{num_str}"
+
+    if resolved:
+        return f"https://t.me/nft/{resolved}"
 
     return DEFAULT_MARKET_URL
+
+
+def build_nft_link(title: str, gift_number=None, explicit_url=None, slug=None) -> str:
+    return build_auto_gift_url(title=title, gift_number=gift_number, explicit_url=explicit_url, slug=slug)
 
 
 def get_all_gifts_rows():
@@ -276,6 +283,12 @@ def upsert_gift_in_db(
     existing = cur.fetchone()
 
     resolved_slug = resolve_slug(title, slug or (existing["slug"] if existing else None))
+    auto_url = build_auto_gift_url(
+        title=title,
+        gift_number=num_val if num_val is not None else (existing["gift_number"] if existing else None),
+        explicit_url=url_val if url_val is not None else (existing["custom_url"] if existing else None),
+        slug=resolved_slug,
+    )
 
     if existing:
         new_ton = ton_val if ton_val is not None else existing["ton"]
@@ -286,7 +299,7 @@ def upsert_gift_in_db(
         new_model = model_val if model_val is not None else existing["model"]
         new_backdrop = backdrop_val if backdrop_val is not None else existing["backdrop"]
         new_symbol = symbol_val if symbol_val is not None else existing["symbol"]
-        new_url = url_val if url_val is not None else existing["custom_url"]
+        new_url = auto_url
 
         cur.execute("""
             UPDATE gifts
@@ -315,7 +328,7 @@ def upsert_gift_in_db(
             model_val,
             backdrop_val,
             symbol_val,
-            url_val,
+            auto_url,
         ))
 
     conn.commit()
@@ -351,22 +364,28 @@ def restore_mrkt_session_from_env():
 
 
 def save_collection_price(name, title, floor_ton):
-    slug = normalize_slug(name or "") or normalize_slug(title or "")
+    """يحفظ/يحدّث سعر الهدية ويبني رابطها تلقائياً من اسمها عند التجميع."""
+    clean_title = (title or name or "").strip()
+    slug = normalize_slug(name or "") or normalize_slug(clean_title)
     if not slug or floor_ton is None or floor_ton <= 0:
         return
+    display_title = clean_title or slug
+    auto_url = build_auto_gift_url(title=display_title, slug=slug)
+
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("SELECT id FROM gifts WHERE LOWER(slug) = LOWER(?)", (slug,))
+    cur.execute("SELECT id, custom_url FROM gifts WHERE LOWER(slug) = LOWER(?)", (slug,))
     row = cur.fetchone()
     if row:
+        final_url = row[1] if (row[1] and row[1].strip()) else auto_url
         cur.execute(
-            "UPDATE gifts SET ton = ?, floor_price = ? WHERE id = ?",
-            (floor_ton, floor_ton, row[0]),
+            "UPDATE gifts SET ton = ?, floor_price = ?, slug = COALESCE(slug, ?), custom_url = ? WHERE id = ?",
+            (floor_ton, floor_ton, slug, final_url, row[0]),
         )
     else:
         cur.execute(
-            "INSERT OR IGNORE INTO gifts (title, slug, ton, floor_price) VALUES (?, ?, ?, ?)",
-            (title or slug, slug, floor_ton, floor_ton),
+            "INSERT OR IGNORE INTO gifts (title, slug, ton, floor_price, custom_url) VALUES (?, ?, ?, ?, ?)",
+            (display_title, slug, floor_ton, floor_ton, auto_url),
         )
     conn.commit()
     conn.close()
@@ -762,20 +781,33 @@ def handle_admin_update(user_text: str):
 
 
 def linkify_gifts_in_reply(ai_reply: str) -> str:
+    """يحوّل تلقائياً أسماء الهدايا المجمّعة (عربي أو إنجليزي/slug) في رد البوت إلى روابط قابلة للضغط."""
     rows = get_all_gifts_rows()
     formatted = ai_reply
+
+    candidates = []
     for r in rows:
-        title = r.get("title", "")
-        if not title or title not in formatted:
-            continue
-        gift_url = build_nft_link(
-            title=title,
+        gift_url = build_auto_gift_url(
+            title=r.get("title", ""),
             gift_number=r.get("gift_number"),
             explicit_url=r.get("custom_url"),
             slug=r.get("slug"),
         )
-        if f'>{title}</a>' not in formatted:
-            formatted = formatted.replace(title, f'<a href="{gift_url}">{title}</a>', 1)
+        title = (r.get("title") or "").strip()
+        slug = (r.get("slug") or "").strip()
+        if title:
+            candidates.append((title, gift_url))
+        if slug and slug.lower() != title.lower():
+            candidates.append((slug, gift_url))
+
+    # ترتيب الأسماء من الأطول إلى الأقصر لتجنب استبدال جزء من اسم أطول
+    candidates.sort(key=lambda x: len(x[0]), reverse=True)
+
+    for label, gift_url in candidates:
+        pattern = re.compile(r"(?<!</a>)(?<!\">)" + re.escape(label) + r"(?!</a>)", re.IGNORECASE)
+        if pattern.search(formatted):
+            formatted = pattern.sub(lambda m: f'<a href="{gift_url}">{m.group(0)}</a>', formatted, count=1)
+
     return formatted
 
 
