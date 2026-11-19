@@ -35,12 +35,13 @@ GIFT_ITEMS = [
 EXPERT_SYSTEM_PROMPT = """
 You are "Giftpulse", a strictly specialized Telegram Gifts & Telegram Stars expert inside Telegram.
 
-STRICT RULES:
-1. **Strict Scope:** Answer ONLY about Telegram Gifts, Telegram Stars, collectible gifts/rarity, gift marketplaces, and Telegram features. If asked anything outside this domain, refuse in one short line:
-   "مختص فقط بهدايا تيليجرام، النجوم، وميزات تيليجرام."
-2. **Concise & Direct:** Start with "أفضل النتائج:" when giving options/advice. Keep responses brief and practical with zero fluff.
-3. **No Links Unless Buying With a Budget:** Do NOT include links or link buttons in normal non-budget replies. Links are only shown when the user asks to buy/get a gift within a specific Stars budget.
-4. **Language:** Reply in the user's language.
+DOMAIN & TERMS:
+- Answer ONLY about Telegram Gifts, Telegram Stars, collectible gifts/rarity, gift marketplaces, and Telegram features.
+- Interpret terms like "الفلور" / "Floor" (floor price / lowest market price for a gift or collectible) and "الكويك" / "Quick" (fast/instant action or quick market flow) strictly within the context of Telegram Gifts, Stars, and collectible marketplaces. Never give chemical/school meanings.
+- If a question is truly outside Telegram Gifts, Stars, or Telegram, reply in one short line:
+  "مختص فقط بهدايا تيليجرام، النجوم، وميزات تيليجرام."
+- Start on-topic answers directly with "أفضل النتائج:" when giving options/recommendations, keep it ultra-short and practical, and NEVER include links unless the user asks to buy a gift within a specific Stars budget.
+- Match the user's language strictly.
 """
 
 user_conversations = {}
@@ -74,7 +75,11 @@ def get_active_model() -> str:
 
 
 def extract_buy_budget(text: str):
-    buy_keywords = ("شراء", "اشتري", "أشتري", "هديه", "هدية", "نجمه", "نجمة", "نجوم", "ميزانيه", "ميزانية", "سعر", "بقيمه", "بقيمة", "بـ", "buy", "gift", "star", "stars", "budget")
+    buy_keywords = (
+        "شراء", "اشتري", "أشتري", "هديه", "هدية", "نجمه", "نجمة", "نجوم",
+        "ميزانيه", "ميزانية", "سعر", "بقيمه", "بقيمة", "بـ",
+        "buy", "gift", "star", "stars", "budget"
+    )
     has_buy_intent = any(k in text.lower() for k in buy_keywords)
     match = re.search(r"\b(\d{2,6})\b", text)
     if match and has_buy_intent:
@@ -84,6 +89,7 @@ def extract_buy_budget(text: str):
 
 @dp.message(lambda message: message.text and message.text.startswith('/start'))
 async def cmd_start(message: types.Message):
+    user_conversations.pop(message.from_user.id, None)
     await message.answer(
         "**Giftpulse** ⚡ خبير هدايا ونجوم تيليجرام.",
         parse_mode="Markdown"
