@@ -25,17 +25,127 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 MRKT_GIFTS = [
-    {"title": "آيس كريم مخروطي", "ton": 1.2, "stars": 300, "floor": 1.2, "quick": 1.1},
-    {"title": "نودلز", "ton": 1.8, "stars": 438, "floor": 1.8, "quick": 1.7},
-    {"title": "آيس كريم شوكولاتة", "ton": 2.0, "stars": 449, "floor": 2.0, "quick": 1.9},
-    {"title": "شعلة", "ton": 2.5, "stars": 460, "floor": 2.5, "quick": 2.4},
-    {"title": "تمثال الحرية", "ton": 3.5, "stars": 480, "floor": 3.5, "quick": 3.3},
-    {"title": "كلب الهيب هوب", "ton": 4.0, "stars": 480, "floor": 4.0, "quick": 3.8},
-    {"title": "فانوس", "ton": 4.5, "stars": 480, "floor": 4.5, "quick": 4.3},
-    {"title": "مصاصة ملونة", "ton": 5.0, "stars": 480, "floor": 5.0, "quick": 4.8},
-    {"title": "عوامة فلامنجو", "ton": 6.5, "stars": 480, "floor": 6.5, "quick": 6.2},
-    {"title": "حقيبة تيليجرام", "ton": 8.0, "stars": 480, "floor": 8.0, "quick": 7.6},
-    {"title": "قناع", "ton": 13.8, "stars": 843, "floor": 13.81, "quick": 13.30},
+    {
+        "title": "آيس كريم مخروطي",
+        "ton": 1.2,
+        "stars": 300,
+        "floor": 1.2,
+        "quick": 1.1,
+        "model": "Classic Cone",
+        "symbol": "Star",
+        "backdrop": "Sky Blue",
+        "supply": "قياسي",
+    },
+    {
+        "title": "نودلز",
+        "ton": 1.8,
+        "stars": 438,
+        "floor": 1.8,
+        "quick": 1.7,
+        "model": "Spicy Bowl",
+        "symbol": "Flame",
+        "backdrop": "Warm Amber",
+        "supply": "قياسي",
+    },
+    {
+        "title": "آيس كريم شوكولاتة",
+        "ton": 2.0,
+        "stars": 449,
+        "floor": 2.0,
+        "quick": 1.9,
+        "model": "Dark Cocoa",
+        "symbol": "Heart",
+        "backdrop": "Espresso",
+        "supply": "قياسي",
+    },
+    {
+        "title": "شعلة",
+        "ton": 2.5,
+        "stars": 460,
+        "floor": 2.5,
+        "quick": 2.4,
+        "model": "Solar Torch",
+        "symbol": "Spark",
+        "backdrop": "Crimson",
+        "supply": "قياسي",
+    },
+    {
+        "title": "تمثال الحرية",
+        "ton": 3.5,
+        "stars": 480,
+        "floor": 3.5,
+        "quick": 3.3,
+        "model": "Liberty Classic",
+        "symbol": "Crown",
+        "backdrop": "Emerald",
+        "supply": "محدود",
+    },
+    {
+        "title": "كلب الهيب هوب",
+        "ton": 4.0,
+        "stars": 480,
+        "floor": 4.0,
+        "quick": 3.8,
+        "model": "Street Beat",
+        "symbol": "Note",
+        "backdrop": "Neon Violet",
+        "supply": "محدود",
+    },
+    {
+        "title": "فانوس",
+        "ton": 4.5,
+        "stars": 480,
+        "floor": 4.5,
+        "quick": 4.3,
+        "model": "Golden Lantern",
+        "symbol": "Crescent",
+        "backdrop": "Night Gold",
+        "supply": "محدود",
+    },
+    {
+        "title": "مصاصة ملونة",
+        "ton": 5.0,
+        "stars": 480,
+        "floor": 5.0,
+        "quick": 4.8,
+        "model": "Rainbow Swirl",
+        "symbol": "Candy",
+        "backdrop": "Pastel Pink",
+        "supply": "محدود",
+    },
+    {
+        "title": "عوامة فلامنجو",
+        "ton": 6.5,
+        "stars": 480,
+        "floor": 6.5,
+        "quick": 6.2,
+        "model": "Tropical Float",
+        "symbol": "Wave",
+        "backdrop": "Turquoise",
+        "supply": "محدود",
+    },
+    {
+        "title": "حقيبة تيليجرام",
+        "ton": 8.0,
+        "stars": 480,
+        "floor": 8.0,
+        "quick": 7.6,
+        "model": "TG Carry",
+        "symbol": "Gem",
+        "backdrop": "Cobalt",
+        "supply": "محدود",
+    },
+    {
+        "title": "قناع",
+        "ton": 13.8,
+        "stars": 843,
+        "floor": 13.81,
+        "quick": 13.30,
+        "model": "Phantom Mask",
+        "symbol": "Eclipse",
+        "backdrop": "Obsidian",
+        "supply": "نادر",
+    },
 ]
 
 EXPERT_SYSTEM_PROMPT = """
@@ -125,21 +235,34 @@ def handle_admin_update(user_text: str):
     stars_val = None
     floor_val = None
     quick_val = None
+    model_val = None
+    symbol_val = None
+    backdrop_val = None
+    supply_val = None
 
     for p in parts[1:]:
         low = p.lower()
         num_match = re.search(r"(\d+(?:\.\d+)?)", p)
-        if not num_match:
-            continue
-        val = float(num_match.group(1))
         if "فلور" in low or "أرضية" in low or "ارضية" in low or "floor" in low:
-            floor_val = val
+            if num_match:
+                floor_val = float(num_match.group(1))
         elif "كويك" in low or "quick" in low:
-            quick_val = val
+            if num_match:
+                quick_val = float(num_match.group(1))
         elif "نجم" in low or "star" in low:
-            stars_val = int(val)
+            if num_match:
+                stars_val = int(float(num_match.group(1)))
         elif "تون" in low or "ton" in low or re.search(r"\b\d+(?:\.\d+)?\s*t\b", low):
-            ton_val = val
+            if num_match:
+                ton_val = float(num_match.group(1))
+        elif "النموذج" in p or "نموذج" in low or "model" in low:
+            model_val = p.split(":", 1)[-1].replace("النموذج", "").replace("نموذج", "").strip()
+        elif "الرمز" in p or "رمز" in low or "symbol" in low:
+            symbol_val = p.split(":", 1)[-1].replace("الرمز", "").replace("رمز", "").strip()
+        elif "الخلفية" in p or "خلفية" in low or "backdrop" in low:
+            backdrop_val = p.split(":", 1)[-1].replace("الخلفية", "").replace("خلفية", "").strip()
+        elif "الكمية" in p or "كمية" in low or "supply" in low:
+            supply_val = p.split(":", 1)[-1].replace("الكمية", "").replace("كمية", "").strip()
 
     existing = next((g for g in MRKT_GIFTS if g["title"].lower() == title.lower()), None)
     if existing:
@@ -151,6 +274,14 @@ def handle_admin_update(user_text: str):
             existing["floor"] = floor_val
         if quick_val is not None:
             existing["quick"] = quick_val
+        if model_val:
+            existing["model"] = model_val
+        if symbol_val:
+            existing["symbol"] = symbol_val
+        if backdrop_val:
+            existing["backdrop"] = backdrop_val
+        if supply_val:
+            existing["supply"] = supply_val
     else:
         MRKT_GIFTS.append({
             "title": title,
@@ -158,20 +289,33 @@ def handle_admin_update(user_text: str):
             "stars": stars_val if stars_val is not None else 0,
             "floor": floor_val,
             "quick": quick_val,
+            "model": model_val or "غير محدد",
+            "symbol": symbol_val or "غير محدد",
+            "backdrop": backdrop_val or "غير محدد",
+            "supply": supply_val or "غير محدد",
         })
 
     return f"تم تحديث بيانات {title} بنجاح."
 
 
-def format_gift_details(gift: dict) -> str:
+def format_gift_card(gift: dict) -> str:
     lines = [
         f"الهدية: {gift['title']}",
-        f"السعر: {gift.get('ton', 0):g} TON",
+        "────────────────────",
+        f"القيمة: {gift.get('ton', 0):g} TON",
     ]
     if gift.get("floor") is not None:
         lines.append(f"الفلور: {gift['floor']}")
     if gift.get("quick") is not None:
-        lines.append(f"الكويك (البيع الفوري): {gift['quick']}")
+        lines.append(f"الكويك: {gift['quick']}")
+    if gift.get("model"):
+        lines.append(f"النموذج: {gift['model']}")
+    if gift.get("symbol"):
+        lines.append(f"الرمز: {gift['symbol']}")
+    if gift.get("backdrop"):
+        lines.append(f"الخلفية: {gift['backdrop']}")
+    if gift.get("supply"):
+        lines.append(f"الكمية: {gift['supply']}")
     return "\n".join(lines)
 
 
@@ -193,7 +337,7 @@ async def on_gift_click(callback: types.CallbackQuery):
     if not gift:
         await callback.message.answer("لم يتم العثور على بيانات هذه الهدية.")
         return
-    await callback.message.answer(format_gift_details(gift), disable_web_page_preview=True)
+    await callback.message.answer(format_gift_card(gift), disable_web_page_preview=True)
 
 
 @dp.message()
