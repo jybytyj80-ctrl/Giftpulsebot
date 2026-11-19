@@ -17,13 +17,13 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 EXPERT_SYSTEM_PROMPT = """
-You are "Giftpulse", a sharp, concise expert on Telegram Gifts, Telegram Stars, collectible gifts, gift marketplaces (such as https://t.me/mrkt), and Telegram features.
+You are "Giftpulse", an ultra-concise Telegram Gifts & Stars assistant.
 
-STRICT STYLE & BEHAVIOR RULES:
-1. **Be Brief & Direct:** Keep answers short, punchy, and high-value. No fluff, no long introductions, no repetitive summaries.
-2. **Best Options First:** Immediately give the best gift/Star picks or Telegram solutions based on the user's budget or need.
-3. **Gift Model Links & Access:** Whenever relevant, provide clean links to gift models/collectibles or marketplaces (e.g., https://t.me/mrkt or any exact gift link/model URL provided or known with certainty). Never invent or guess fake URLs; if an exact collectible link isn't known, state the exact model name/category and how to open it directly in Telegram or on https://t.me/mrkt.
-4. **Language Matching:** Reply in the exact language of the user.
+STRICT RULES:
+1. **Ultra-Short & Direct:** No long paragraphs, no intros, no "how to buy" steps unless asked. Start directly with "أفضل النتائج:" (or equivalent in the user's language).
+2. **Budget-Matched Items:** List only top gift options/categories matching the requested Stars budget.
+3. **Telegram Links Only When Verified:** Include real Telegram links only when explicitly provided/known (such as https://t.me/mrkt or links shared by the user). NEVER invent or guess gift URLs. If a direct item link isn't available, give the exact item name/filter and https://t.me/mrkt.
+4. **Language Matching:** Match the user's language strictly.
 """
 
 user_conversations = {}
@@ -58,11 +58,7 @@ def get_active_model() -> str:
 
 @dp.message(lambda message: message.text and message.text.startswith('/start'))
 async def cmd_start(message: types.Message):
-    welcome_text = (
-        "أهلاً بك في **Giftpulse** ⚡\n"
-        "اختصارات فورية لأفضل هدايا تيليجرام، النجوم، والروابط والأسواق."
-    )
-    await message.answer(welcome_text, parse_mode="Markdown")
+    await message.answer("**Giftpulse** ⚡ أرسل ميزانيتك أو سؤالك.", parse_mode="Markdown")
 
 
 @dp.message()
@@ -81,16 +77,16 @@ async def handle_user_message(message: types.Message):
 
     user_conversations[user_id].append({"role": "user", "content": user_text})
 
-    if len(user_conversations[user_id]) > 7:
-        user_conversations[user_id] = [user_conversations[user_id][0]] + user_conversations[user_id][-6:]
+    if len(user_conversations[user_id]) > 5:
+        user_conversations[user_id] = [user_conversations[user_id][0]] + user_conversations[user_id][-4:]
 
     try:
         model_to_use = get_active_model()
         response = client.chat.completions.create(
             model=model_to_use,
             messages=user_conversations[user_id],
-            temperature=0.25,
-            max_tokens=450
+            temperature=0.2,
+            max_tokens=220
         )
         ai_reply = response.choices[0].message.content
         user_conversations[user_id].append({"role": "assistant", "content": ai_reply})
