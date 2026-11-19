@@ -81,15 +81,16 @@ async def handle_user_message(message: types.Message):
 
     user_conversations[user_id].append({"role": "user", "content": user_text})
 
-    if len(user_conversations[user_id]) > 11:
-        user_conversations[user_id] = [user_conversations[user_id][0]] + user_conversations[user_id][-10:]
+    if len(user_conversations[user_id]) > 7:
+        user_conversations[user_id] = [user_conversations[user_id][0]] + user_conversations[user_id][-6:]
 
     try:
         model_to_use = get_active_model()
         response = client.chat.completions.create(
             model=model_to_use,
             messages=user_conversations[user_id],
-            temperature=0.25
+            temperature=0.25,
+            max_tokens=450
         )
         ai_reply = response.choices[0].message.content
         user_conversations[user_id].append({"role": "assistant", "content": ai_reply})
