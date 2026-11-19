@@ -320,6 +320,8 @@ def save_collection_price(name, title, floor_ton):
 
 
 async def sync_prices_from_mrkt() -> int:
+    if not (API_ID_ENV.isdigit() and API_HASH_ENV):
+        raise RuntimeError("TG_API_ID / TG_API_HASH غير مكتملة.")
     async with MarketClient(
         api_id=int(API_ID_ENV),
         api_hash=API_HASH_ENV,
