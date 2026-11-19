@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 import sqlite3
+from aiohttp import web
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -22,6 +23,7 @@ TG_SESSION_STRING = os.getenv("TG_SESSION_STRING", "").strip()
 MRKT_BOT_USERNAME = os.getenv("MRKT_BOT_USERNAME", "mrkt").strip().lstrip("@")
 MRKT_WEB_URL = os.getenv("MRKT_WEB_URL", "https://t.me/mrkt/app").strip()
 DB_PATH = os.getenv("DB_PATH", "gifts_market.db").strip()
+API_PORT = int(os.getenv("PORT", "8080"))
 
 DEVELOPER_USERNAME = "vvopnm8"
 DEVELOPER_NAME = "عباس"
@@ -50,17 +52,17 @@ AR_TO_SLUG = {
 }
 
 INITIAL_GIFTS = [
-    ("آيس كريم مخروطي", "IceCreamCone", 1.2, 300, 1.2, 1.1, None, None),
-    ("نودلز", "InstantRamen", 1.8, 438, 1.8, 1.7, None, None),
-    ("آيس كريم شوكولاتة", "ChocolateIceCream", 2.0, 449, 2.0, 1.9, None, None),
-    ("شعلة", "Torch", 2.5, 460, 2.5, 2.4, None, None),
-    ("تمثال الحرية", "LibertyFigure", 3.5, 480, 3.5, 3.3, None, None),
-    ("كلب الهيب هوب", "HipHopDog", 4.0, 480, 4.0, 3.8, None, None),
-    ("فانوس", "GenieLamp", 4.5, 480, 4.5, 4.3, None, None),
-    ("مصاصة ملونة", "LolPop", 5.0, 480, 5.0, 4.8, None, None),
-    ("عوامة فلامنجو", "FlamingoFloat", 6.5, 480, 6.5, 6.2, None, None),
-    ("حقيبة تيليجرام", "TelegramBag", 8.0, 480, 8.0, 7.6, None, None),
-    ("قناع", "Mask", 13.8, 843, 13.81, 13.30, None, None),
+    ("آيس كريم مخروطي", "IceCreamCone", 1.2, 300, 1.2, 1.1, None, "Standard", "Classic", "None", None),
+    ("نودلز", "InstantRamen", 1.8, 438, 1.8, 1.7, None, "Standard", "Classic", "None", None),
+    ("آيس كريم شوكولاتة", "ChocolateIceCream", 2.0, 449, 2.0, 1.9, None, "Standard", "Classic", "None", None),
+    ("شعلة", "Torch", 2.5, 460, 2.5, 2.4, None, "Standard", "Classic", "None", None),
+    ("تمثال الحرية", "LibertyFigure", 3.5, 480, 3.5, 3.3, None, "Standard", "Classic", "None", None),
+    ("كلب الهيب هوب", "HipHopDog", 4.0, 480, 4.0, 3.8, None, "Standard", "Classic", "None", None),
+    ("فانوس", "GenieLamp", 4.5, 480, 4.5, 4.3, 53, "Blueprint", "Lavender", "Crusader", None),
+    ("مصاصة ملونة", "LolPop", 5.0, 480, 5.0, 4.8, None, "Standard", "Classic", "None", None),
+    ("عوامة فلامنجو", "FlamingoFloat", 6.5, 480, 6.5, 6.2, None, "Standard", "Classic", "None", None),
+    ("حقيبة تيليجرام", "TelegramBag", 8.0, 480, 8.0, 7.6, None, "Standard", "Classic", "None", None),
+    ("قناع", "Mask", 13.8, 843, 13.81, 13.30, None, "Standard", "Classic", "None", None),
 ]
 
 EXPERT_SYSTEM_PROMPT = """
@@ -92,6 +94,9 @@ def init_db():
             floor_price REAL,
             quick_price REAL,
             gift_number INTEGER,
+            model TEXT,
+            backdrop TEXT,
+            symbol TEXT,
             custom_url TEXT
         )
     """)
@@ -108,8 +113,11 @@ def init_db():
     count = cur.fetchone()[0]
     if count == 0:
         cur.executemany("""
-            INSERT INTO gifts (title, slug, ton, stars, floor_price, quick_price, gift_number, custom_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO gifts (
+                title, slug, ton, stars, floor_price, quick_price,
+                gift_number, model, backdrop, symbol, custom_url
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, INITIAL_GIFTS)
     conn.commit()
     conn.close()
@@ -154,7 +162,29 @@ def get_all_gifts_rows():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    cur.execute("SELECT title, slug, ton, stars, floor_price, quick_price, gift_number, custom_url FROM gifts ORDER BY ton DESC")
+    cur.execute("""
+        SELECT title, slug, ton, stars, floor_price, quick_price,
+               gift_number, model, backdrop, symbol, custom_url
+        FROM gifts
+        ORDER BY ton DESC
+    """)
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_gifts_within_budget(max_ton: float, limit: int = 5):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT title, slug, ton, stars, floor_price, quick_price,
+               gift_number, model, backdrop, symbol, custom_url
+        FROM gifts
+        WHERE ton IS NOT NULL AND ton <= ?
+        ORDER BY ton DESC
+        LIMIT ?
+    """, (max_ton, limit))
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
@@ -169,11 +199,25 @@ def get_all_gifts_summary() -> str:
         s = f"{r['title']}: {r['ton']:g} TON"
         if r.get("floor_price") is not None and r.get("quick_price") is not None:
             s += f" (فلور {r['floor_price']} / كويك {r['quick_price']})"
+        if r.get("model"):
+            s += f" [موديل: {r['model']}]"
         parts.append(s)
     return " | ".join(parts)
 
 
-def upsert_gift_in_db(title, slug, ton_val, stars_val, floor_val, quick_val, num_val, url_val):
+def upsert_gift_in_db(
+    title,
+    slug=None,
+    ton_val=None,
+    stars_val=None,
+    floor_val=None,
+    quick_val=None,
+    num_val=None,
+    model_val=None,
+    backdrop_val=None,
+    symbol_val=None,
+    url_val=None,
+):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
@@ -188,17 +232,27 @@ def upsert_gift_in_db(title, slug, ton_val, stars_val, floor_val, quick_val, num
         new_floor = floor_val if floor_val is not None else existing["floor_price"]
         new_quick = quick_val if quick_val is not None else existing["quick_price"]
         new_num = num_val if num_val is not None else existing["gift_number"]
+        new_model = model_val if model_val is not None else existing["model"]
+        new_backdrop = backdrop_val if backdrop_val is not None else existing["backdrop"]
+        new_symbol = symbol_val if symbol_val is not None else existing["symbol"]
         new_url = url_val if url_val is not None else existing["custom_url"]
 
         cur.execute("""
             UPDATE gifts
-            SET slug = ?, ton = ?, stars = ?, floor_price = ?, quick_price = ?, gift_number = ?, custom_url = ?
+            SET slug = ?, ton = ?, stars = ?, floor_price = ?, quick_price = ?,
+                gift_number = ?, model = ?, backdrop = ?, symbol = ?, custom_url = ?
             WHERE id = ?
-        """, (resolved_slug, new_ton, new_stars, new_floor, new_quick, new_num, new_url, existing["id"]))
+        """, (
+            resolved_slug, new_ton, new_stars, new_floor, new_quick,
+            new_num, new_model, new_backdrop, new_symbol, new_url, existing["id"]
+        ))
     else:
         cur.execute("""
-            INSERT INTO gifts (title, slug, ton, stars, floor_price, quick_price, gift_number, custom_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO gifts (
+                title, slug, ton, stars, floor_price, quick_price,
+                gift_number, model, backdrop, symbol, custom_url
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             title,
             resolved_slug,
@@ -207,6 +261,9 @@ def upsert_gift_in_db(title, slug, ton_val, stars_val, floor_val, quick_val, num
             floor_val,
             quick_val,
             num_val,
+            model_val,
+            backdrop_val,
+            symbol_val,
             url_val,
         ))
 
@@ -227,6 +284,77 @@ def save_feed_items(items):
         )
     conn.commit()
     conn.close()
+
+
+# --- API Endpoints (aiohttp) ---
+async def api_health(request: web.Request) -> web.Response:
+    return web.json_response({"status": "ok", "service": "Giftpulse MRKT API"})
+
+
+async def api_get_gifts(request: web.Request) -> web.Response:
+    max_ton_param = request.query.get("max_ton")
+    if max_ton_param is not None:
+        try:
+            max_ton_val = float(max_ton_param)
+            rows = get_gifts_within_budget(max_ton_val, limit=50)
+        except ValueError:
+            return web.json_response({"error": "Invalid max_ton"}, status=400)
+    else:
+        rows = get_all_gifts_rows()
+
+    for r in rows:
+        r["link"] = build_nft_link(
+            title=r.get("title", ""),
+            gift_number=r.get("gift_number"),
+            explicit_url=r.get("custom_url"),
+            slug=r.get("slug"),
+        )
+    return web.json_response({"count": len(rows), "gifts": rows})
+
+
+async def api_upsert_gifts(request: web.Request) -> web.Response:
+    try:
+        payload = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+
+    items = payload.get("gifts") if isinstance(payload, dict) and "gifts" in payload else [payload]
+    if not isinstance(items, list) or not items:
+        return web.json_response({"error": "Provide a gift object or a 'gifts' list"}, status=400)
+
+    saved = 0
+    for item in items:
+        if not isinstance(item, dict) or not item.get("title"):
+            continue
+        upsert_gift_in_db(
+            title=str(item["title"]).strip(),
+            slug=item.get("slug"),
+            ton_val=item.get("ton"),
+            stars_val=item.get("stars"),
+            floor_val=item.get("floor_price"),
+            quick_val=item.get("quick_price"),
+            num_val=item.get("gift_number"),
+            model_val=item.get("model"),
+            backdrop_val=item.get("backdrop"),
+            symbol_val=item.get("symbol"),
+            url_val=item.get("custom_url") or item.get("url"),
+        )
+        saved += 1
+
+    return web.json_response({"status": "saved", "count": saved})
+
+
+async def start_api_server():
+    app = web.Application()
+    app.router.add_get("/api/health", api_health)
+    app.router.add_get("/api/gifts", api_get_gifts)
+    app.router.add_post("/api/gifts", api_upsert_gifts)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", API_PORT)
+    await site.start()
+    print(f"Giftpulse API running on port {API_PORT}")
 
 
 def get_active_model() -> str:
@@ -303,10 +431,6 @@ async def sync_mrkt_via_secondary_account() -> str:
                     upsert_gift_in_db(
                         title=slug_part,
                         slug=slug_part,
-                        ton_val=None,
-                        stars_val=None,
-                        floor_val=None,
-                        quick_val=None,
                         num_val=int(num_part),
                         url_val=nft_match.group(0),
                     )
@@ -424,7 +548,7 @@ def handle_admin_update(user_text: str):
     raw = user_text.split(":", 1)[1].strip()
     parts = [p.strip() for p in raw.split("|")]
     if not parts or not parts[0]:
-        return "صيغة التحديث: تحديث: اسم الهدية | تون 5.0 | فلور 5.2 | كويك 4.9 | رقم 53 | رابط https://..."
+        return "صيغة التحديث: تحديث: اسم الهدية | تون 5.0 | فلور 5.2 | كويك 4.9 | رقم 53 | موديل Blueprint | خلفية Lavender | رمز Crusader | رابط https://..."
 
     title = parts[0]
     ton_val = None
@@ -434,6 +558,9 @@ def handle_admin_update(user_text: str):
     url_val = None
     num_val = None
     slug_val = None
+    model_val = None
+    backdrop_val = None
+    symbol_val = None
 
     for p in parts[1:]:
         low = p.lower()
@@ -447,6 +574,18 @@ def handle_admin_update(user_text: str):
             if slug_candidate:
                 slug_val = slug_candidate
                 continue
+
+        if "موديل" in p or "نموذج" in p or "model" in low:
+            model_val = p.split(":", 1)[-1].replace("موديل", "").replace("نموذج", "").strip()
+            continue
+
+        if "خلفية" in p or "backdrop" in low:
+            backdrop_val = p.split(":", 1)[-1].replace("خلفية", "").strip()
+            continue
+
+        if "رمز" in p or "symbol" in low:
+            symbol_val = p.split(":", 1)[-1].replace("رمز", "").strip()
+            continue
 
         num_match = re.search(r"(\d+(?:\.\d+)?)", p)
         if not num_match:
@@ -471,6 +610,9 @@ def handle_admin_update(user_text: str):
         floor_val=floor_val,
         quick_val=quick_val,
         num_val=num_val,
+        model_val=model_val,
+        backdrop_val=backdrop_val,
+        symbol_val=symbol_val,
         url_val=url_val,
     )
     return f"تم حفظ وتحديث بيانات {title} في قاعدة البيانات."
@@ -489,7 +631,6 @@ def linkify_gifts_in_reply(ai_reply: str) -> str:
             explicit_url=r.get("custom_url"),
             slug=r.get("slug"),
         )
-        # استبدال مباشر إذا لم يكن مسبوقاً بـ <a href="..."><
         if f'>{title}</a>' not in formatted:
             formatted = formatted.replace(title, f'<a href="{gift_url}">{title}</a>', 1)
     return formatted
@@ -578,6 +719,7 @@ async def handle_user_message(message: types.Message):
 
 async def main():
     init_db()
+    await start_api_server()
     print("Giftpulse Bot is starting...")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
