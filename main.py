@@ -24,19 +24,18 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# قائمة الهدايا مع سعر TON والرابط (يمكن تحديثها مباشرة عبر أمر: تحديث: ...)
 MRKT_GIFTS = [
-    {"title": "آيس كريم مخروطي", "ton": 1.2, "stars": 300, "floor": 1.2, "quick": 1.1, "url": DEFAULT_MARKET_URL},
-    {"title": "نودلز", "ton": 1.8, "stars": 438, "floor": 1.8, "quick": 1.7, "url": DEFAULT_MARKET_URL},
-    {"title": "آيس كريم شوكولاتة", "ton": 2.0, "stars": 449, "floor": 2.0, "quick": 1.9, "url": DEFAULT_MARKET_URL},
-    {"title": "شعلة", "ton": 2.5, "stars": 460, "floor": 2.5, "quick": 2.4, "url": DEFAULT_MARKET_URL},
-    {"title": "تمثال الحرية", "ton": 3.5, "stars": 480, "floor": 3.5, "quick": 3.3, "url": DEFAULT_MARKET_URL},
-    {"title": "كلب الهيب هوب", "ton": 4.0, "stars": 480, "floor": 4.0, "quick": 3.8, "url": DEFAULT_MARKET_URL},
-    {"title": "فانوس", "ton": 4.5, "stars": 480, "floor": 4.5, "quick": 4.3, "url": DEFAULT_MARKET_URL},
-    {"title": "مصاصة ملونة", "ton": 5.0, "stars": 480, "floor": 5.0, "quick": 4.8, "url": DEFAULT_MARKET_URL},
-    {"title": "عوامة فلامنجو", "ton": 6.5, "stars": 480, "floor": 6.5, "quick": 6.2, "url": DEFAULT_MARKET_URL},
-    {"title": "حقيبة تيليجرام", "ton": 8.0, "stars": 480, "floor": 8.0, "quick": 7.6, "url": DEFAULT_MARKET_URL},
-    {"title": "قناع", "ton": 13.8, "stars": 843, "floor": 13.81, "quick": 13.30, "url": DEFAULT_MARKET_URL},
+    {"title": "آيس كريم مخروطي", "ton": 1.2, "stars": 300, "floor": 1.2, "quick": 1.1},
+    {"title": "نودلز", "ton": 1.8, "stars": 438, "floor": 1.8, "quick": 1.7},
+    {"title": "آيس كريم شوكولاتة", "ton": 2.0, "stars": 449, "floor": 2.0, "quick": 1.9},
+    {"title": "شعلة", "ton": 2.5, "stars": 460, "floor": 2.5, "quick": 2.4},
+    {"title": "تمثال الحرية", "ton": 3.5, "stars": 480, "floor": 3.5, "quick": 3.3},
+    {"title": "كلب الهيب هوب", "ton": 4.0, "stars": 480, "floor": 4.0, "quick": 3.8},
+    {"title": "فانوس", "ton": 4.5, "stars": 480, "floor": 4.5, "quick": 4.3},
+    {"title": "مصاصة ملونة", "ton": 5.0, "stars": 480, "floor": 5.0, "quick": 4.8},
+    {"title": "عوامة فلامنجو", "ton": 6.5, "stars": 480, "floor": 6.5, "quick": 6.2},
+    {"title": "حقيبة تيليجرام", "ton": 8.0, "stars": 480, "floor": 8.0, "quick": 7.6},
+    {"title": "قناع", "ton": 13.8, "stars": 843, "floor": 13.81, "quick": 13.30},
 ]
 
 EXPERT_SYSTEM_PROMPT = """
@@ -116,26 +115,19 @@ def extract_buy_budget(text: str):
 
 
 def handle_admin_update(user_text: str):
-    # صيغة التحديث: تحديث: اسم الهدية | تون 5.0 | فلور 5.2 | كويك 4.9 | رابط https://...
     raw = user_text.split(":", 1)[1].strip()
     parts = [p.strip() for p in raw.split("|")]
     if not parts or not parts[0]:
-        return "صيغة التحديث: تحديث: اسم الهدية | تون 5.0 | فلور 5.2 | كويك 4.9 | رابط https://..."
+        return "صيغة التحديث: تحديث: اسم الهدية | تون 5.0 | فلور 5.2 | كويك 4.9"
 
     title = parts[0]
     ton_val = None
     stars_val = None
     floor_val = None
     quick_val = None
-    url_val = None
 
     for p in parts[1:]:
         low = p.lower()
-        url_match = re.search(r"(https?://\S+)", p)
-        if url_match and ("رابط" in low or "url" in low or "link" in low or url_match.group(1).startswith("http")):
-            url_val = url_match.group(1).strip()
-            continue
-
         num_match = re.search(r"(\d+(?:\.\d+)?)", p)
         if not num_match:
             continue
@@ -159,8 +151,6 @@ def handle_admin_update(user_text: str):
             existing["floor"] = floor_val
         if quick_val is not None:
             existing["quick"] = quick_val
-        if url_val is not None:
-            existing["url"] = url_val
     else:
         MRKT_GIFTS.append({
             "title": title,
@@ -168,10 +158,21 @@ def handle_admin_update(user_text: str):
             "stars": stars_val if stars_val is not None else 0,
             "floor": floor_val,
             "quick": quick_val,
-            "url": url_val or DEFAULT_MARKET_URL,
         })
 
     return f"تم تحديث بيانات {title} بنجاح."
+
+
+def format_gift_details(gift: dict) -> str:
+    lines = [
+        f"الهدية: {gift['title']}",
+        f"السعر: {gift.get('ton', 0):g} TON",
+    ]
+    if gift.get("floor") is not None:
+        lines.append(f"الفلور: {gift['floor']}")
+    if gift.get("quick") is not None:
+        lines.append(f"الكويك (البيع الفوري): {gift['quick']}")
+    return "\n".join(lines)
 
 
 @dp.message(lambda message: message.text and message.text.startswith('/start'))
@@ -182,6 +183,17 @@ async def cmd_start(message: types.Message):
         f'المطور: <a href="https://t.me/{DEVELOPER_USERNAME}">{DEVELOPER_NAME}</a>'
     )
     await message.answer(start_text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("gift:"))
+async def on_gift_click(callback: types.CallbackQuery):
+    gift_title = callback.data.split(":", 1)[1].strip()
+    gift = next((g for g in MRKT_GIFTS if g["title"] == gift_title), None)
+    await callback.answer()
+    if not gift:
+        await callback.message.answer("لم يتم العثور على بيانات هذه الهدية.")
+        return
+    await callback.message.answer(format_gift_details(gift), disable_web_page_preview=True)
 
 
 @dp.message()
@@ -211,15 +223,14 @@ async def handle_user_message(message: types.Message):
                 lines = [f"هدايا MRKT ضمن ميزانية {amount:g} TON:"]
                 buttons = []
                 for item in matched:
-                    item_url = item.get("url") or DEFAULT_MARKET_URL
-                    line = f'• <a href="{item_url}">{item["title"]}</a> — {item["ton"]:g} TON'
+                    line = f"• {item['title']} — {item['ton']:g} TON"
                     if item.get("floor") is not None and item.get("quick") is not None:
                         line += f" (فلور {item['floor']} / كويك {item['quick']})"
                     lines.append(line)
-                    buttons.append([InlineKeyboardButton(text=f"رابط {item['title']}", url=item_url)])
+                    buttons.append([InlineKeyboardButton(text=item["title"], callback_data=f"gift:{item['title']}")])
                 buttons.append([InlineKeyboardButton(text="فتح سوق MRKT", url=DEFAULT_MARKET_URL)])
                 kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-                await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+                await message.answer("\n".join(lines), reply_markup=kb, disable_web_page_preview=True)
                 return
             else:
                 await message.answer(f"لا توجد هدية مسجلة حالياً بسعر {amount:g} TON أو أقل.")
@@ -235,12 +246,11 @@ async def handle_user_message(message: types.Message):
                 lines = [f"هدايا ضمن {int(amount)} نجمة:"]
                 buttons = []
                 for item in matched:
-                    item_url = item.get("url") or DEFAULT_MARKET_URL
-                    lines.append(f'• <a href="{item_url}">{item["title"]}</a> — {item["stars"]} ⭐ ({item.get("ton", 0):g} TON)')
-                    buttons.append([InlineKeyboardButton(text=f"رابط {item['title']}", url=item_url)])
+                    lines.append(f"• {item['title']} — {item['stars']} ⭐ ({item.get('ton', 0):g} TON)")
+                    buttons.append([InlineKeyboardButton(text=item["title"], callback_data=f"gift:{item['title']}")])
                 buttons.append([InlineKeyboardButton(text="فتح سوق MRKT", url=DEFAULT_MARKET_URL)])
                 kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-                await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+                await message.answer("\n".join(lines), reply_markup=kb, disable_web_page_preview=True)
                 return
 
     if user_id not in user_conversations:
