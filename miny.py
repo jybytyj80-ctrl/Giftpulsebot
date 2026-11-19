@@ -1,10 +1,13 @@
 import asyncio
 import base64
 import gzip
-import json
+import importlib
 import os
+import pkgutil
 import re
 import sqlite3
+import sys
+from typing import Optional
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -13,6 +16,7 @@ from groq import Groq
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import RequestWebViewRequest
+import amrkt
 from amrkt import MarketClient
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -40,6 +44,44 @@ DEFAULT_MARKET_URL = "https://t.me/mrkt/app"
 
 if not TELEGRAM_BOT_TOKEN or not GROQ_API_KEY:
     raise ValueError("Missing TELEGRAM_BOT_TOKEN or GROQ_API_KEY in Railway Variables")
+
+
+def patch_amrkt_gift_collection_model():
+    """يبحث في جميع وحدات مكتبة amrkt ويسمح بأن يكون floorPriceNanoTons قابلاً لـ None."""
+    try:
+        if hasattr(amrkt, "__path__"):
+            for _, mod_name, _ in pkgutil.walk_packages(amrkt.__path__, amrkt.__name__ + "."):
+                try:
+                    importlib.import_module(mod_name)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    patched_count = 0
+    for mod_name, mod in list(sys.modules.items()):
+        if not mod_name.startswith("amrkt") or mod is None:
+            continue
+        for attr in dir(mod):
+            obj = getattr(mod, attr, None)
+            if isinstance(obj, type) and hasattr(obj, "model_fields"):
+                fields = getattr(obj, "model_fields", {})
+                if "floorPriceNanoTons" in fields or "floor_price_nano_tons" in fields:
+                    for fname in ("floorPriceNanoTons", "floor_price_nano_tons"):
+                        if fname in fields:
+                            finfo = fields[fname]
+                            finfo.annotation = Optional[int]
+                            finfo.default = 0
+                    if hasattr(obj, "model_rebuild"):
+                        try:
+                            obj.model_rebuild(force=True)
+                        except Exception:
+                            pass
+                    patched_count += 1
+    print(f"تم ترقيع {patched_count} نموذج داخل مكتبة amrkt لدعم الأسعار الفارغة.")
+
+
+patch_amrkt_gift_collection_model()
 
 client = Groq(api_key=GROQ_API_KEY)
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
@@ -298,7 +340,6 @@ def restore_mrkt_session_from_env():
             cleaned_b64 += "=" * (4 - missing_padding)
 
         raw_bytes = base64.b64decode(cleaned_b64)
-        # فك ضغط gzip تلقائياً إذا كان النص مضغوطاً بصيغة gzip
         if raw_bytes[:2] == b"\x1f\x8b":
             raw_bytes = gzip.decompress(raw_bytes)
 
@@ -307,50 +348,6 @@ def restore_mrkt_session_from_env():
         print("تم استرجاع ملف جلسة MRKT من المتغيرات.")
     except Exception as e:
         print(f"فشل استرجاع جلسة MRKT: {e}")
-
-
-def _sanitize_mrkt_payload(data):
-    """يعوّض floorPriceNanoTons إذا كانت None بصفر 0 لتفادي فشل Pydantic."""
-    if isinstance(data, list):
-        for item in data:
-            _sanitize_mrkt_payload(item)
-    elif isinstance(data, dict):
-        if "floorPriceNanoTons" in data and data["floorPriceNanoTons"] is None:
-            data["floorPriceNanoTons"] = 0
-        for v in data.values():
-            if isinstance(v, (list, dict)):
-                _sanitize_mrkt_payload(v)
-    return data
-
-
-def _patch_amrkt_client(mc):
-    """يغلّف دوال جلب البيانات الداخلية في MarketClient لتصحيح floorPriceNanoTons قبل التحقق."""
-    for attr_name in ("_http", "_client", "http", "client", "_session"):
-        sub = getattr(mc, attr_name, None)
-        if sub is None:
-            continue
-        for method_name in ("get", "request", "_request", "post"):
-            orig_fn = getattr(sub, method_name, None)
-            if not callable(orig_fn) or getattr(orig_fn, "_giftpulse_patched", False):
-                continue
-
-            async def _wrapped(self, *args, __orig=orig_fn, **kwargs):
-                resp = await __orig(*args, **kwargs)
-                if isinstance(resp, (list, dict)):
-                    _sanitize_mrkt_payload(resp)
-                elif hasattr(resp, "json") and callable(resp.json):
-                    try:
-                        data = await resp.json()
-                        _sanitize_mrkt_payload(data)
-                        resp.json = lambda d=data: asyncio.sleep(0, result=d)
-                    except Exception:
-                        pass
-                return resp
-
-            import types as py_types
-            bound = py_types.MethodType(_wrapped, sub)
-            setattr(bound, "_giftpulse_patched", True)
-            setattr(sub, method_name, bound)
 
 
 def save_collection_price(name, title, floor_ton):
@@ -384,7 +381,6 @@ async def sync_prices_from_mrkt() -> int:
         session_name="mrkt",
         workdir=MRKT_SESSION_DIR,
     ) as mc:
-        _patch_amrkt_client(mc)
         try:
             cols = await mc.get_collections()
         except Exception as e:
