@@ -56,7 +56,7 @@ INITIAL_GIFTS = [
     ("شعلة", "Torch", 2.5, 460, 2.5, 2.4, None, None),
     ("تمثال الحرية", "LibertyFigure", 3.5, 480, 3.5, 3.3, None, None),
     ("كلب الهيب هوب", "HipHopDog", 4.0, 480, 4.0, 3.8, None, None),
-    ("فانوس", "GenieLamp", 4.5, 480, 4.5, 4.3, 53, None),
+    ("فانوس", "GenieLamp", 4.5, 480, 4.5, 4.3, None, None),
     ("مصاصة ملونة", "LolPop", 5.0, 480, 5.0, 4.8, None, None),
     ("عوامة فلامنجو", "FlamingoFloat", 6.5, 480, 6.5, 6.2, None, None),
     ("حقيبة تيليجرام", "TelegramBag", 8.0, 480, 8.0, 7.6, None, None),
@@ -114,7 +114,20 @@ def clean_text(text: str) -> str:
 
 
 def normalize_slug(name: str) -> str:
-    return re.sub(r"[^A-Za-z0-9]", "", name.title())
+    words = re.findall(r"[A-Za-z0-9]+", name)
+    if not words:
+        return ""
+    return "".join(w.capitalize() for w in words)
+
+
+def resolve_slug(title: str, explicit_slug=None) -> str:
+    if explicit_slug and explicit_slug.strip():
+        cleaned = normalize_slug(explicit_slug)
+        if cleaned:
+            return cleaned
+    if title in AR_TO_SLUG:
+        return AR_TO_SLUG[title]
+    return normalize_slug(title)
 
 
 def build_nft_link(title: str, gift_number=None, explicit_url=None, slug=None) -> str:
@@ -124,9 +137,9 @@ def build_nft_link(title: str, gift_number=None, explicit_url=None, slug=None) -
     if gift_number is not None:
         num_str = str(gift_number).strip().lstrip("#")
         if num_str.isdigit():
-            resolved_slug = slug or AR_TO_SLUG.get(title) or normalize_slug(title)
-            if resolved_slug:
-                return f"https://t.me/nft/{resolved_slug}-{num_str}"
+            resolved = resolve_slug(title, slug)
+            if resolved:
+                return f"https://t.me/nft/{resolved}-{num_str}"
 
     return DEFAULT_MARKET_URL
 
@@ -168,8 +181,9 @@ def upsert_gift_in_db(title, slug, ton_val, stars_val, floor_val, quick_val, num
     cur.execute("SELECT * FROM gifts WHERE LOWER(title) = LOWER(?)", (title,))
     existing = cur.fetchone()
 
+    resolved_slug = resolve_slug(title, slug or (existing["slug"] if existing else None))
+
     if existing:
-        new_slug = slug or existing["slug"] or AR_TO_SLUG.get(title) or normalize_slug(title)
         new_ton = ton_val if ton_val is not None else existing["ton"]
         new_stars = stars_val if stars_val is not None else existing["stars"]
         new_floor = floor_val if floor_val is not None else existing["floor_price"]
@@ -181,9 +195,8 @@ def upsert_gift_in_db(title, slug, ton_val, stars_val, floor_val, quick_val, num
             UPDATE gifts
             SET slug = ?, ton = ?, stars = ?, floor_price = ?, quick_price = ?, gift_number = ?, custom_url = ?
             WHERE id = ?
-        """, (new_slug, new_ton, new_stars, new_floor, new_quick, new_num, new_url, existing["id"]))
+        """, (resolved_slug, new_ton, new_stars, new_floor, new_quick, new_num, new_url, existing["id"]))
     else:
-        resolved_slug = slug or AR_TO_SLUG.get(title) or normalize_slug(title)
         cur.execute("""
             INSERT INTO gifts (title, slug, ton, stars, floor_price, quick_price, gift_number, custom_url)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -310,7 +323,9 @@ def extract_nft_query(text: str):
     if url_match:
         return url_match.group(1)
 
-    num_match = re.search(r"#?\s*(\d{1,9})\b", text)
+    num_match = re.search(r"#\s*(\d{1,9})\b", text)
+    if not num_match:
+        num_match = re.search(r"\b(\d{1,9})\b", text)
     if not num_match:
         return None
 
@@ -319,7 +334,7 @@ def extract_nft_query(text: str):
         if ar_name in text:
             return f"https://t.me/nft/{slug}-{gift_num}"
 
-    eng_match = re.search(r"([A-Za-z][A-Za-z\s]{1,30}?)\s*#?\s*\d{1,9}\b", text)
+    eng_match = re.search(r"([A-Za-z][A-Za-z\s\-]{1,40}?)\s*#?\s*\d{1,9}\b", text)
     if eng_match:
         slug = normalize_slug(eng_match.group(1))
         if slug:
@@ -367,6 +382,7 @@ def handle_admin_update(user_text: str):
     quick_val = None
     url_val = None
     num_val = None
+    slug_val = None
 
     for p in parts[1:]:
         low = p.lower()
@@ -374,6 +390,12 @@ def handle_admin_update(user_text: str):
         if url_match and ("رابط" in p or "url" in low or "link" in low or url_match.group(1).startswith("http")):
             url_val = url_match.group(1).strip()
             continue
+
+        if "slug" in low or "انجليزي" in p or "إنجليزي" in p:
+            slug_candidate = normalize_slug(p.split(":", 1)[-1] if ":" in p else p)
+            if slug_candidate:
+                slug_val = slug_candidate
+                continue
 
         num_match = re.search(r"(\d+(?:\.\d+)?)", p)
         if not num_match:
@@ -392,7 +414,7 @@ def handle_admin_update(user_text: str):
 
     upsert_gift_in_db(
         title=title,
-        slug=AR_TO_SLUG.get(title) or normalize_slug(title),
+        slug=slug_val or resolve_slug(title),
         ton_val=ton_val,
         stars_val=stars_val,
         floor_val=floor_val,
