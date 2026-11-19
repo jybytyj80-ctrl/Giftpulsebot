@@ -1,10 +1,6 @@
 {
   "$schema": "https://schema.railpack.com",
-  "steps": {
-    "install": {
-      "commands": [
-        "pip install aiogram groq telethon amrkt pillow playwright"
-      ]
-    }
+  "packages": {
+    "libatomic": "latest"
   }
 }
