@@ -339,6 +339,33 @@ async def sync_prices_from_mrkt() -> int:
         session_name="mrkt",
         workdir=MRKT_SESSION_DIR,
     ) as mc:
+        raw_cols = None
+        for method_name in ("get_raw_collections", "_get_collections", "fetch_collections"):
+            fn = getattr(mc, method_name, None)
+            if callable(fn):
+                try:
+                    raw_cols = await fn()
+                    break
+                except Exception:
+                    pass
+
+        if raw_cols is not None:
+            count = 0
+            items = raw_cols if isinstance(raw_cols, list) else (getattr(raw_cols, "items", None) or [])
+            for item in items:
+                if isinstance(item, dict):
+                    if item.get("isHidden") or item.get("is_hidden"):
+                        continue
+                    name = item.get("name") or ""
+                    title = item.get("title") or name
+                    floor_nano = item.get("floorPriceNanoTons")
+                    if floor_nano is None:
+                        floor_nano = item.get("floor_price_nano_tons", 0)
+                    floor_ton = float(floor_nano) / 1e9 if isinstance(floor_nano, (int, float)) else None
+                    save_collection_price(name, title, floor_ton)
+                    count += 1
+            return count
+
         try:
             cols = await mc.get_collections()
         except Exception as e:
