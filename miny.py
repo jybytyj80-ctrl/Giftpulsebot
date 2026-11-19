@@ -289,13 +289,13 @@ EXPERT_SYSTEM_PROMPT = """
 You are "Giftpulse", an expert advisor on Telegram Gifts, Telegram Stars, collectible attributes (Model, Backdrop, Symbol), and trading in the MRKT marketplace.
 
 STRICT RULES:
-1. Keep replies VERY SHORT (maximum 2 concise lines). Include the exact price/floor/quick/model/number details provided in the database entries when answering about a collection.
+1. Keep replies VERY SHORT (maximum 2 concise lines). Format gift items clearly as: Gift Name #Number — Price TON (include floor/model/backdrop/symbol only when relevant or asked). Include the exact price/floor/quick/model/number details provided in the database entries when answering about a collection.
 2. NEVER invent NFT gift numbers (#...) if a gift number is not explicitly given in the database entry. Only mention a number if it is explicitly shown in the database entry.
 3. NEVER say "لا يمكنني عرض روابط" or "لا أستطيع إرسال روابط". Gift names in replies are automatically turned into clickable links by the bot, and there is a "فتح سوق MRKT" button below.
 4. Never use ** or markdown asterisks. Plain text only.
 5. Prices in MRKT are in TON (not thousands of Stars). Floor = floor price; Quick = instant sale price (slightly below floor).
 6. Answer ONLY about Telegram Gifts, Telegram Stars, collectibles, and MRKT. Outside scope: reply in one short line:
-   هذا البوت مخصص لهدايا تيليجرام والنجوم وسوق MRKT.
+   مختص بالهدايا ومايدور حولها فقط
 """
 
 user_conversations = {}
@@ -462,9 +462,12 @@ def get_gifts_within_budget(max_ton: float, limit: int = 5):
 def _format_gift_entry(r: dict) -> str:
   ton_val = r.get("ton")
   ton_str = f"{float(ton_val):g} TON" if ton_val is not None else "غير محدد"
-  s = f"{r['title']}: السعر {ton_str}"
-  if r.get("gift_number") is not None and int(r["gift_number"]) > 0:
-    s += f" | رقم #{r['gift_number']}"
+  name_with_num = (
+      f"{r['title']} #{r['gift_number']}"
+      if r.get("gift_number") is not None and int(r["gift_number"]) > 0
+      else r["title"]
+  )
+  s = f"{name_with_num} — {ton_str}"
   if r.get("floor_price") is not None:
     s += f" | فلور {r['floor_price']} TON"
   if r.get("quick_price") is not None:
@@ -760,7 +763,9 @@ async def _fetch_gift_number_via_search(mc, col) -> Optional[int]:
         break
 
     try:
-      res = await fn(**kwargs) if kwargs else await fn(q)
+      res = await asyncio.wait_for(
+          fn(**kwargs) if kwargs else fn(q), timeout=6.0
+      )
       items = []
       if isinstance(res, list):
         items = res
@@ -812,7 +817,7 @@ async def sync_prices_from_mrkt() -> int:
           _LOGGED_AMRKT_METHODS = True
 
         try:
-          cols = await mc.get_collections()
+          cols = await asyncio.wait_for(mc.get_collections(), timeout=20.0)
         except Exception as e:
           print(f"تحذير أثناء قراءة بعض الكولكشنز في get_collections: {e}")
           _SYNC_STATUS["last_error"] = str(e)
@@ -839,7 +844,6 @@ async def sync_prices_from_mrkt() -> int:
             if FETCH_GIFT_NUMBERS:
               await asyncio.sleep(0.08)
 
-      # حفظ كل النتائج في معاملة واحدة سريعة بعد انتهاء طلبات الشبكة لتجنب database is locked
       conn = get_db_conn(row_factory=False)
       try:
         cur = conn.cursor()
