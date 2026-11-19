@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import sqlite3
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -19,11 +20,12 @@ API_ID_ENV = (os.getenv("TG_API_ID") or os.getenv("API_ID") or "").strip()
 API_HASH_ENV = (os.getenv("TG_API_HASH") or os.getenv("API_HASH") or "").strip()
 TG_SESSION_STRING = os.getenv("TG_SESSION_STRING", "").strip()
 MRKT_BOT_USERNAME = os.getenv("MRKT_BOT_USERNAME", "mrkt").strip().lstrip("@")
-MRKT_WEB_URL = os.getenv("MRKT_WEB_URL", "https://t.me/mrkt").strip()
+MRKT_WEB_URL = os.getenv("MRKT_WEB_URL", "https://t.me/mrkt/app").strip()
+DB_PATH = os.getenv("DB_PATH", "gifts_market.db").strip()
 
 DEVELOPER_USERNAME = "vvopnm8"
 DEVELOPER_NAME = "عباس"
-DEFAULT_MARKET_URL = "https://t.me/mrkt"
+DEFAULT_MARKET_URL = "https://t.me/mrkt/app"
 
 if not TELEGRAM_BOT_TOKEN or not GROQ_API_KEY:
     raise ValueError("Missing TELEGRAM_BOT_TOKEN or GROQ_API_KEY in Railway Variables")
@@ -33,18 +35,32 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-MRKT_GIFTS = [
-    {"title": "آيس كريم مخروطي", "ton": 1.2, "stars": 300, "floor": 1.2, "quick": 1.1, "url": DEFAULT_MARKET_URL},
-    {"title": "نودلز", "ton": 1.8, "stars": 438, "floor": 1.8, "quick": 1.7, "url": DEFAULT_MARKET_URL},
-    {"title": "آيس كريم شوكولاتة", "ton": 2.0, "stars": 449, "floor": 2.0, "quick": 1.9, "url": DEFAULT_MARKET_URL},
-    {"title": "شعلة", "ton": 2.5, "stars": 460, "floor": 2.5, "quick": 2.4, "url": DEFAULT_MARKET_URL},
-    {"title": "تمثال الحرية", "ton": 3.5, "stars": 480, "floor": 3.5, "quick": 3.3, "url": DEFAULT_MARKET_URL},
-    {"title": "كلب الهيب هوب", "ton": 4.0, "stars": 480, "floor": 4.0, "quick": 3.8, "url": DEFAULT_MARKET_URL},
-    {"title": "فانوس", "ton": 4.5, "stars": 480, "floor": 4.5, "quick": 4.3, "url": DEFAULT_MARKET_URL},
-    {"title": "مصاصة ملونة", "ton": 5.0, "stars": 480, "floor": 5.0, "quick": 4.8, "url": DEFAULT_MARKET_URL},
-    {"title": "عوامة فلامنجو", "ton": 6.5, "stars": 480, "floor": 6.5, "quick": 6.2, "url": DEFAULT_MARKET_URL},
-    {"title": "حقيبة تيليجرام", "ton": 8.0, "stars": 480, "floor": 8.0, "quick": 7.6, "url": DEFAULT_MARKET_URL},
-    {"title": "قناع", "ton": 13.8, "stars": 843, "floor": 13.81, "quick": 13.30, "url": DEFAULT_MARKET_URL},
+AR_TO_SLUG = {
+    "آيس كريم مخروطي": "IceCreamCone",
+    "نودلز": "InstantRamen",
+    "آيس كريم شوكولاتة": "ChocolateIceCream",
+    "شعلة": "Torch",
+    "تمثال الحرية": "LibertyFigure",
+    "كلب الهيب هوب": "HipHopDog",
+    "فانوس": "GenieLamp",
+    "مصاصة ملونة": "LolPop",
+    "عوامة فلامنجو": "FlamingoFloat",
+    "حقيبة تيليجرام": "TelegramBag",
+    "قناع": "Mask",
+}
+
+INITIAL_GIFTS = [
+    ("آيس كريم مخروطي", "IceCreamCone", 1.2, 300, 1.2, 1.1, None, None),
+    ("نودلز", "InstantRamen", 1.8, 438, 1.8, 1.7, None, None),
+    ("آيس كريم شوكولاتة", "ChocolateIceCream", 2.0, 449, 2.0, 1.9, None, None),
+    ("شعلة", "Torch", 2.5, 460, 2.5, 2.4, None, None),
+    ("تمثال الحرية", "LibertyFigure", 3.5, 480, 3.5, 3.3, None, None),
+    ("كلب الهيب هوب", "HipHopDog", 4.0, 480, 4.0, 3.8, None, None),
+    ("فانوس", "GenieLamp", 4.5, 480, 4.5, 4.3, 53, None),
+    ("مصاصة ملونة", "LolPop", 5.0, 480, 5.0, 4.8, None, None),
+    ("عوامة فلامنجو", "FlamingoFloat", 6.5, 480, 6.5, 6.2, None, None),
+    ("حقيبة تيليجرام", "TelegramBag", 8.0, 480, 8.0, 7.6, None, None),
+    ("قناع", "Mask", 13.8, 843, 13.81, 13.30, None, None),
 ]
 
 EXPERT_SYSTEM_PROMPT = """
@@ -66,8 +82,124 @@ STRICT RULES:
 user_conversations = {}
 
 
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS gifts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT UNIQUE NOT NULL,
+            slug TEXT,
+            ton REAL DEFAULT 0.0,
+            stars INTEGER DEFAULT 0,
+            floor_price REAL,
+            quick_price REAL,
+            gift_number INTEGER,
+            custom_url TEXT
+        )
+    """)
+    cur.execute("SELECT COUNT(*) FROM gifts")
+    count = cur.fetchone()[0]
+    if count == 0:
+        cur.executemany("""
+            INSERT INTO gifts (title, slug, ton, stars, floor_price, quick_price, gift_number, custom_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, INITIAL_GIFTS)
+    conn.commit()
+    conn.close()
+
+
 def clean_text(text: str) -> str:
     return text.replace("**", "").strip()
+
+
+def normalize_slug(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "", name.title())
+
+
+def build_nft_link(title: str, gift_number=None, explicit_url=None, slug=None) -> str:
+    if explicit_url and explicit_url.strip():
+        return explicit_url.strip()
+
+    if gift_number is not None:
+        num_str = str(gift_number).strip().lstrip("#")
+        if num_str.isdigit():
+            resolved_slug = slug or AR_TO_SLUG.get(title) or normalize_slug(title)
+            if resolved_slug:
+                return f"https://t.me/nft/{resolved_slug}-{num_str}"
+
+    return DEFAULT_MARKET_URL
+
+
+def get_gifts_by_ton_budget(max_ton: float, limit: int = 5):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT * FROM gifts
+        WHERE ton IS NOT NULL AND ton <= ?
+        ORDER BY ton DESC
+        LIMIT ?
+    """, (max_ton, limit))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_gifts_by_stars_budget(max_stars: float, limit: int = 5):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT * FROM gifts
+        WHERE stars IS NOT NULL AND stars <= ?
+        ORDER BY stars DESC
+        LIMIT ?
+    """, (max_stars, limit))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def upsert_gift_in_db(title, slug, ton_val, stars_val, floor_val, quick_val, num_val, url_val):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM gifts WHERE LOWER(title) = LOWER(?)", (title,))
+    existing = cur.fetchone()
+
+    if existing:
+        new_slug = slug or existing["slug"] or AR_TO_SLUG.get(title) or normalize_slug(title)
+        new_ton = ton_val if ton_val is not None else existing["ton"]
+        new_stars = stars_val if stars_val is not None else existing["stars"]
+        new_floor = floor_val if floor_val is not None else existing["floor_price"]
+        new_quick = quick_val if quick_val is not None else existing["quick_price"]
+        new_num = num_val if num_val is not None else existing["gift_number"]
+        new_url = url_val if url_val is not None else existing["custom_url"]
+
+        cur.execute("""
+            UPDATE gifts
+            SET slug = ?, ton = ?, stars = ?, floor_price = ?, quick_price = ?, gift_number = ?, custom_url = ?
+            WHERE id = ?
+        """, (new_slug, new_ton, new_stars, new_floor, new_quick, new_num, new_url, existing["id"]))
+    else:
+        resolved_slug = slug or AR_TO_SLUG.get(title) or normalize_slug(title)
+        cur.execute("""
+            INSERT INTO gifts (title, slug, ton, stars, floor_price, quick_price, gift_number, custom_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            title,
+            resolved_slug,
+            ton_val if ton_val is not None else 0.0,
+            stars_val if stars_val is not None else 0,
+            floor_val,
+            quick_val,
+            num_val,
+            url_val,
+        ))
+
+    conn.commit()
+    conn.close()
 
 
 def get_active_model() -> str:
@@ -173,6 +305,29 @@ async def inspect_mrkt_content() -> str:
         return f"خطأ أثناء فحص محتوى MRKT: {e}"
 
 
+def extract_nft_query(text: str):
+    url_match = re.search(r"(https?://t\.me/nft/[^\s]+)", text, re.IGNORECASE)
+    if url_match:
+        return url_match.group(1)
+
+    num_match = re.search(r"#?\s*(\d{1,9})\b", text)
+    if not num_match:
+        return None
+
+    gift_num = num_match.group(1)
+    for ar_name, slug in AR_TO_SLUG.items():
+        if ar_name in text:
+            return f"https://t.me/nft/{slug}-{gift_num}"
+
+    eng_match = re.search(r"([A-Za-z][A-Za-z\s]{1,30}?)\s*#?\s*\d{1,9}\b", text)
+    if eng_match:
+        slug = normalize_slug(eng_match.group(1))
+        if slug:
+            return f"https://t.me/nft/{slug}-{gift_num}"
+
+    return None
+
+
 def extract_buy_budget(text: str):
     low = text.lower().strip()
     buy_keywords = (
@@ -203,7 +358,7 @@ def handle_admin_update(user_text: str):
     raw = user_text.split(":", 1)[1].strip()
     parts = [p.strip() for p in raw.split("|")]
     if not parts or not parts[0]:
-        return "صيغة التحديث: تحديث: اسم الهدية | تون 5.0 | فلور 5.2 | كويك 4.9 | رابط https://..."
+        return "صيغة التحديث: تحديث: اسم الهدية | تون 5.0 | فلور 5.2 | كويك 4.9 | رقم 53 | رابط https://..."
 
     title = parts[0]
     ton_val = None
@@ -211,6 +366,7 @@ def handle_admin_update(user_text: str):
     floor_val = None
     quick_val = None
     url_val = None
+    num_val = None
 
     for p in parts[1:]:
         low = p.lower()
@@ -223,7 +379,9 @@ def handle_admin_update(user_text: str):
         if not num_match:
             continue
         val = float(num_match.group(1))
-        if "فلور" in low or "أرضية" in low or "ارضية" in low or "floor" in low:
+        if "رقم" in p or "number" in low or "#" in p:
+            num_val = int(val)
+        elif "فلور" in low or "أرضية" in low or "ارضية" in low or "floor" in low:
             floor_val = val
         elif "كويك" in low or "quick" in low:
             quick_val = val
@@ -232,29 +390,17 @@ def handle_admin_update(user_text: str):
         elif "تون" in low or "ton" in low or re.search(r"\b\d+(?:\.\d+)?\s*t\b", low):
             ton_val = val
 
-    existing = next((g for g in MRKT_GIFTS if g["title"].lower() == title.lower()), None)
-    if existing:
-        if ton_val is not None:
-            existing["ton"] = ton_val
-        if stars_val is not None:
-            existing["stars"] = stars_val
-        if floor_val is not None:
-            existing["floor"] = floor_val
-        if quick_val is not None:
-            existing["quick"] = quick_val
-        if url_val is not None:
-            existing["url"] = url_val
-    else:
-        MRKT_GIFTS.append({
-            "title": title,
-            "ton": ton_val if ton_val is not None else 0.0,
-            "stars": stars_val if stars_val is not None else 0,
-            "floor": floor_val,
-            "quick": quick_val,
-            "url": url_val or DEFAULT_MARKET_URL,
-        })
-
-    return f"تم تحديث بيانات {title} بنجاح."
+    upsert_gift_in_db(
+        title=title,
+        slug=AR_TO_SLUG.get(title) or normalize_slug(title),
+        ton_val=ton_val,
+        stars_val=stars_val,
+        floor_val=floor_val,
+        quick_val=quick_val,
+        num_val=num_val,
+        url_val=url_val,
+    )
+    return f"تم حفظ وتحديث بيانات {title} في قاعدة البيانات."
 
 
 @dp.message(lambda message: message.text and message.text.startswith('/start'))
@@ -291,22 +437,32 @@ async def handle_user_message(message: types.Message):
         await message.answer(msg, disable_web_page_preview=True)
         return
 
+    nft_link = extract_nft_query(user_text)
+    if nft_link:
+        await message.answer(
+            f'رابط الهدية في تيليجرام: <a href="{nft_link}">فتح الهدية</a>',
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+        return
+
     budget_info = extract_buy_budget(user_text)
     if budget_info is not None:
         currency, amount = budget_info
         if currency == "ton":
-            matched = sorted(
-                [g for g in MRKT_GIFTS if g.get("ton") is not None and g["ton"] <= amount],
-                key=lambda x: x["ton"],
-                reverse=True
-            )[:5]
+            matched = get_gifts_by_ton_budget(amount, limit=5)
             if matched:
                 lines = [f"هدايا MRKT ضمن ميزانية {amount:g} TON:"]
                 for item in matched:
-                    gift_url = item.get("url") or DEFAULT_MARKET_URL
+                    gift_url = build_nft_link(
+                        title=item.get("title", ""),
+                        gift_number=item.get("gift_number"),
+                        explicit_url=item.get("custom_url"),
+                        slug=item.get("slug"),
+                    )
                     line = f'• <a href="{gift_url}">{item["title"]}</a> — {item["ton"]:g} TON'
-                    if item.get("floor") is not None and item.get("quick") is not None:
-                        line += f" (فلور {item['floor']} / كويك {item['quick']})"
+                    if item.get("floor_price") is not None and item.get("quick_price") is not None:
+                        line += f" (فلور {item['floor_price']} / كويك {item['quick_price']})"
                     lines.append(line)
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="فتح سوق MRKT", url=DEFAULT_MARKET_URL)],
@@ -318,15 +474,16 @@ async def handle_user_message(message: types.Message):
                 return
 
         elif currency == "stars":
-            matched = sorted(
-                [g for g in MRKT_GIFTS if g.get("stars") is not None and g["stars"] <= amount],
-                key=lambda x: x["stars"],
-                reverse=True
-            )[:5]
+            matched = get_gifts_by_stars_budget(amount, limit=5)
             if matched:
                 lines = [f"هدايا ضمن {int(amount)} نجمة:"]
                 for item in matched:
-                    gift_url = item.get("url") or DEFAULT_MARKET_URL
+                    gift_url = build_nft_link(
+                        title=item.get("title", ""),
+                        gift_number=item.get("gift_number"),
+                        explicit_url=item.get("custom_url"),
+                        slug=item.get("slug"),
+                    )
                     lines.append(f'• <a href="{gift_url}">{item["title"]}</a> — {item["stars"]} ⭐ ({item.get("ton", 0):g} TON)')
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="فتح سوق MRKT", url=DEFAULT_MARKET_URL)],
@@ -360,6 +517,7 @@ async def handle_user_message(message: types.Message):
 
 
 async def main():
+    init_db()
     print("Giftpulse Bot is starting...")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
