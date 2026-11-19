@@ -268,7 +268,7 @@ EXPERT_SYSTEM_PROMPT = """
 You are "Giftpulse", an expert advisor on Telegram Gifts, Telegram Stars, collectible attributes (Model, Backdrop, Symbol), and trading in the MRKT marketplace.
 
 STRICT RULES:
-1. Keep replies VERY SHORT (maximum 2 concise lines). No long paragraphs or filler.
+1. Keep replies VERY SHORT (maximum 2 concise lines). Include the exact price/floor/quick/model details provided in the database entries when answering about a collection.
 2. NEVER say "لا يمكنني عرض روابط" or "لا أستطيع إرسال روابط". Gift names in replies are automatically turned into clickable links by the bot, and there is a "فتح سوق MRKT" button below.
 3. Never use ** or markdown asterisks. Plain text only.
 4. Prices in MRKT are in TON (not thousands of Stars). Floor = floor price; Quick = instant sale price (slightly below floor).
@@ -435,8 +435,25 @@ def get_gifts_within_budget(max_ton: float, limit: int = 5):
   return matched[:limit]
 
 
+def _format_gift_entry(r: dict) -> str:
+  ton_val = r.get("ton")
+  ton_str = f"{float(ton_val):g} TON" if ton_val is not None else "غير محدد"
+  s = f"{r['title']}: السعر {ton_str}"
+  if r.get("floor_price") is not None:
+    s += f" | فلور {r['floor_price']} TON"
+  if r.get("quick_price") is not None:
+    s += f" | كويك {r['quick_price']} TON"
+  if r.get("model"):
+    s += f" | موديل {r['model']}"
+  if r.get("backdrop"):
+    s += f" | خلفية {r['backdrop']}"
+  if r.get("symbol"):
+    s += f" | رمز {r['symbol']}"
+  return s
+
+
 def get_relevant_gifts_summary(user_text: str) -> str:
-  """يرسل ملخصاً مختصراً وسريعاً للهدايا ذات الصلة بالسؤال لتسريع استجابة النموذج."""
+  """يرسل ملخصاً غنياً بالتفاصيل للكولكشنز المطابقة لتسهيل عرض السعر والمعلومات داخل البوت."""
   rows = get_all_gifts_rows()
   if not rows:
     return "لا توجد هدايا مسجلة."
@@ -459,15 +476,7 @@ def get_relevant_gifts_summary(user_text: str) -> str:
     ][:8]
 
   target_rows = matched[:8] if matched else rows[:15]
-  parts = []
-  for r in target_rows:
-    s = f"{r['title']}: {r['ton']:g} TON"
-    if r.get("floor_price") is not None and r.get("quick_price") is not None:
-      s += f" (فلور {r['floor_price']} / كويك {r['quick_price']})"
-    if r.get("model"):
-      s += f" [موديل: {r['model']}]"
-    parts.append(s)
-  return " | ".join(parts)
+  return " || ".join(_format_gift_entry(r) for r in target_rows)
 
 
 def get_db_status_report() -> str:
@@ -617,7 +626,7 @@ def restore_mrkt_session_from_env():
 
 
 def save_collection_price(name, title, floor_ton, conn=None):
-  """يحفظ/يحدّث سعر الهدية ويحدّث رابطها تلقائياً عند التجميع."""
+  """يحفظ/يحدّث سعر الكولكشن ويحدّث رابطها تلقائياً عند التجميع."""
   clean_title = (title or name or "").strip()
   slug = normalize_slug(name or "") or normalize_slug(clean_title)
   if not slug or floor_ton is None or floor_ton <= 0:
@@ -1115,7 +1124,7 @@ def handle_admin_update(user_text: str):
 
 
 def linkify_gifts_in_reply(ai_reply: str) -> str:
-  """يحوّل تلقائياً أسماء الهدايا المجمّعة خارج وسوم HTML إلى روابط قابلة للضغط."""
+  """يحوّل تلقائياً أسماء الكولكشنز/الهدايا خارج وسوم HTML إلى روابط قابلة للضغط."""
   refresh_gifts_cache(force=False)
   candidates = _GIFTS_CACHE["candidates"]
   used_urls = set()
@@ -1245,7 +1254,7 @@ async def handle_user_message(message: types.Message):
             model=model_to_use,
             messages=user_conversations[user_id],
             temperature=0.1,
-            max_tokens=100,
+            max_tokens=120,
         )
     )
     ai_reply = clean_text(response.choices[0].message.content)
