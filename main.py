@@ -64,19 +64,21 @@ INITIAL_GIFTS = [
 ]
 
 EXPERT_SYSTEM_PROMPT = """
-You are "Giftpulse", a specialized expert on Telegram Gifts, Telegram Stars, collectible attributes (model, backdrop, symbol), and the MRKT marketplace.
+You are "Giftpulse", an expert advisor on Telegram Gifts, Telegram Stars, collectible attributes (Model, Backdrop, Symbol), and trading in the MRKT marketplace.
 
-MARKET TERMS (follow exact MRKT trading logic):
-- أسعار السوق في MRKT تُقاس بعملة TON (مثل 5t أو 5 TON)، ويجب عدم تحويل 5t إلى آلاف النجوم أو التعامل معها كنقاط عشوائية.
-- الكويك / البيع الفوري (Quick / Quick sell): سعر البيع الفوري المباشر في السوق، ويكون عادةً أقل بنسبة بسيطة من الأرضية/الفلور لإتمام البيع فوراً، مثل بيع فوري عند 13.30 بينما الأرضية للموديل 13.81 (أقل بـ 4%).
-- الفلور / الأرضية: سعر الأرضية للموديل أو الهدية في السوق (مثل 13.81 في مثال الموديل)، وهو المرجع الأساسي قبل خصم نسبة البيع الفوري.
+CORE TRADING & MARKET RULES:
+1. MRKT prices are denominated in TON (e.g., 5 TON / 5t). Never convert TON into thousands of Stars or treat TON as random points.
+2. Floor price (الفلور / الأرضية): reference market floor price for a gift or model before quick-sell discount.
+3. Quick sell (الكويك / البيع الفوري): instant sale price, usually slightly below floor for fast liquidity (e.g., 13.30 quick vs 13.81 floor).
+4. Collectible value depends heavily on Model, Backdrop, and Symbol rarity, plus supply/liquidity.
+5. Never invent fake live prices or fake NFT numbers that are not in the provided database context. If a user asks for a budget higher than available items in the database, state clearly what is in the database and advise on how to allocate or check MRKT directly.
 
-STRICT RULES:
-1. NEVER use ** or markdown asterisks. Plain clean text only.
-2. Keep every reply short (1 to 3 concise lines), accurate, and practical with a simple example when helpful.
-3. Answer ONLY about Telegram Gifts, Telegram Stars, collectibles, MRKT marketplace, and Telegram features. If outside this scope, reply in one short plain line:
-   هذا البوت مخصص لهدايا تيليجرام والنجوم وسوق MRKT.
-4. Never include links in normal replies. Match the user's language.
+STYLE RULES:
+- Never use ** or markdown asterisks. Clean plain text only.
+- Give practical, sharp, expert advice (2 to 5 clear lines) tailored to what the user asked.
+- Answer ONLY about Telegram Gifts, Telegram Stars, collectibles, MRKT marketplace, and Telegram features. If outside this scope, reply in one short line:
+  هذا البوت مخصص لهدايا تيليجرام والنجوم وسوق MRKT.
+- Match the user's language and dialect naturally while staying clear and accurate.
 """
 
 user_conversations = {}
@@ -144,34 +146,26 @@ def build_nft_link(title: str, gift_number=None, explicit_url=None, slug=None) -
     return DEFAULT_MARKET_URL
 
 
-def get_gifts_by_ton_budget(max_ton: float, limit: int = 5):
+def get_all_gifts_summary() -> str:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    cur.execute("""
-        SELECT * FROM gifts
-        WHERE ton IS NOT NULL AND ton <= ?
-        ORDER BY ton DESC
-        LIMIT ?
-    """, (max_ton, limit))
+    cur.execute("SELECT title, ton, stars, floor_price, quick_price, gift_number FROM gifts ORDER BY ton ASC")
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
-    return rows
 
+    if not rows:
+        return "لا توجد هدايا مسجلة في قاعدة البيانات حالياً."
 
-def get_gifts_by_stars_budget(max_stars: float, limit: int = 5):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT * FROM gifts
-        WHERE stars IS NOT NULL AND stars <= ?
-        ORDER BY stars DESC
-        LIMIT ?
-    """, (max_stars, limit))
-    rows = [dict(r) for r in cur.fetchall()]
-    conn.close()
-    return rows
+    parts = []
+    for r in rows:
+        item_str = f"{r['title']}: {r['ton']:g} TON"
+        if r.get("floor_price") is not None and r.get("quick_price") is not None:
+            item_str += f" (فلور {r['floor_price']} / كويك {r['quick_price']})"
+        if r.get("gift_number") is not None:
+            item_str += f" [#{r['gift_number']}]"
+        parts.append(item_str)
+    return " | ".join(parts)
 
 
 def upsert_gift_in_db(title, slug, ton_val, stars_val, floor_val, quick_val, num_val, url_val):
@@ -325,8 +319,6 @@ def extract_nft_query(text: str):
 
     num_match = re.search(r"#\s*(\d{1,9})\b", text)
     if not num_match:
-        num_match = re.search(r"\b(\d{1,9})\b", text)
-    if not num_match:
         return None
 
     gift_num = num_match.group(1)
@@ -339,32 +331,6 @@ def extract_nft_query(text: str):
         slug = normalize_slug(eng_match.group(1))
         if slug:
             return f"https://t.me/nft/{slug}-{gift_num}"
-
-    return None
-
-
-def extract_buy_budget(text: str):
-    low = text.lower().strip()
-    buy_keywords = (
-        "شراء", "اشتري", "أشتري", "اريد", "أريد", "هديه", "هدية",
-        "ميزانيه", "ميزانية", "سعر", "بقيمه", "بقيمة", "بـ", "ماركت", "mrkt",
-        "buy", "gift", "budget", "ton", "تون"
-    )
-    has_buy_intent = any(k in low for k in buy_keywords)
-    if not has_buy_intent:
-        return None
-
-    ton_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:t|ton|تون)\b", low)
-    if ton_match:
-        return ("ton", float(ton_match.group(1)))
-
-    stars_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:نجم|نجمة|نجوم|star|stars)\b", low)
-    if stars_match:
-        return ("stars", float(stars_match.group(1)))
-
-    plain_num = re.search(r"\b(\d+(?:\.\d+)?)\b", low)
-    if plain_num:
-        return ("ton", float(plain_num.group(1)))
 
     return None
 
@@ -468,71 +434,33 @@ async def handle_user_message(message: types.Message):
         )
         return
 
-    budget_info = extract_buy_budget(user_text)
-    if budget_info is not None:
-        currency, amount = budget_info
-        if currency == "ton":
-            matched = get_gifts_by_ton_budget(amount, limit=5)
-            if matched:
-                lines = [f"هدايا MRKT ضمن ميزانية {amount:g} TON:"]
-                for item in matched:
-                    gift_url = build_nft_link(
-                        title=item.get("title", ""),
-                        gift_number=item.get("gift_number"),
-                        explicit_url=item.get("custom_url"),
-                        slug=item.get("slug"),
-                    )
-                    line = f'• <a href="{gift_url}">{item["title"]}</a> — {item["ton"]:g} TON'
-                    if item.get("floor_price") is not None and item.get("quick_price") is not None:
-                        line += f" (فلور {item['floor_price']} / كويك {item['quick_price']})"
-                    lines.append(line)
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="فتح سوق MRKT", url=DEFAULT_MARKET_URL)],
-                ])
-                await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
-                return
-            else:
-                await message.answer(f"لا توجد هدية مسجلة حالياً بسعر {amount:g} TON أو أقل.")
-                return
-
-        elif currency == "stars":
-            matched = get_gifts_by_stars_budget(amount, limit=5)
-            if matched:
-                lines = [f"هدايا ضمن {int(amount)} نجمة:"]
-                for item in matched:
-                    gift_url = build_nft_link(
-                        title=item.get("title", ""),
-                        gift_number=item.get("gift_number"),
-                        explicit_url=item.get("custom_url"),
-                        slug=item.get("slug"),
-                    )
-                    lines.append(f'• <a href="{gift_url}">{item["title"]}</a> — {item["stars"]} ⭐ ({item.get("ton", 0):g} TON)')
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="فتح سوق MRKT", url=DEFAULT_MARKET_URL)],
-                ])
-                await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
-                return
-
     if user_id not in user_conversations:
         user_conversations[user_id] = [
             {"role": "system", "content": EXPERT_SYSTEM_PROMPT}
         ]
 
-    user_conversations[user_id].append({"role": "user", "content": user_text})
-    if len(user_conversations[user_id]) > 5:
-        user_conversations[user_id] = [user_conversations[user_id][0]] + user_conversations[user_id][-4:]
+    db_snapshot = get_all_gifts_summary()
+    enriched_prompt = f"{user_text}\n\n[بيانات قاعدة البيانات المتاحة حالياً: {db_snapshot}]"
+
+    user_conversations[user_id].append({"role": "user", "content": enriched_prompt})
+    if len(user_conversations[user_id]) > 7:
+        user_conversations[user_id] = [user_conversations[user_id][0]] + user_conversations[user_id][-6:]
 
     try:
         model_to_use = get_active_model()
         response = client.chat.completions.create(
             model=model_to_use,
             messages=user_conversations[user_id],
-            temperature=0.15,
-            max_tokens=160,
+            temperature=0.25,
+            max_tokens=260,
         )
         ai_reply = clean_text(response.choices[0].message.content)
         user_conversations[user_id].append({"role": "assistant", "content": ai_reply})
-        await message.answer(ai_reply, disable_web_page_preview=True)
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="فتح سوق MRKT", url=DEFAULT_MARKET_URL)],
+        ])
+        await message.answer(ai_reply, reply_markup=kb, disable_web_page_preview=True)
     except Exception as e:
         print(f"Groq/Bot error: {e}")
         await message.answer("حدث خطأ تقني مؤقت، حاول مجدداً.")
