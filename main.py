@@ -107,17 +107,30 @@ async def test_mrkt_session() -> str:
             int(API_ID_ENV),
             API_HASH_ENV,
         ) as tg_client:
+            me = await tg_client.get_me()
             peer = await tg_client.get_input_entity(MRKT_BOT_USERNAME)
-            webview = await tg_client(
-                RequestWebViewRequest(
-                    peer=peer,
-                    bot=peer,
-                    platform="android",
-                    url=MRKT_WEB_URL,
+
+            web_url = MRKT_WEB_URL.strip()
+            if web_url and not web_url.startswith(("https://t.me/", "http://t.me/")):
+                webview = await tg_client(
+                    RequestWebViewRequest(
+                        peer=peer,
+                        bot=peer,
+                        platform="android",
+                        url=web_url,
+                    )
                 )
+                has_url = bool(getattr(webview, "url", None))
+                return (
+                    f"اتصال Telethon ناجح بالحساب (@{me.username or me.id}) "
+                    f"وتم فتح WebView: {'نعم' if has_url else 'لا'}."
+                )
+
+            msgs = await tg_client.get_messages(peer, limit=5)
+            return (
+                f"اتصال Telethon ناجح بالحساب (@{me.username or me.id}) "
+                f"والوصول إلى @{MRKT_BOT_USERNAME} سليم (آخر رسائل محفوظة: {len(msgs)})."
             )
-            has_url = bool(getattr(webview, "url", None))
-            return f"اتصال Telethon بـ MRKT ناجح. تم استلام رابط الجلسة: {'نعم' if has_url else 'لا'}."
     except Exception as e:
         return f"فشل اتصال Telethon بـ MRKT: {e}"
 
