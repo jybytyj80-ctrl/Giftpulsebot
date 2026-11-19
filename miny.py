@@ -736,7 +736,6 @@ async def fetch_exact_quick_sell_from_mrkt(q_info: dict) -> dict:
       "listings": [],
   }
 
-  # قراءة البيانات المسجلة في القاعدة أولاً كمرجع احتياطي
   rows = get_all_gifts_rows()
   for r in rows:
     r_slug = normalize_slug(r.get("slug") or r.get("title") or "")
@@ -763,7 +762,6 @@ async def fetch_exact_quick_sell_from_mrkt(q_info: dict) -> dict:
         session_name="mrkt",
         workdir=MRKT_SESSION_DIR,
     ) as mc:
-      # 1) فحص عروض الهدايا عبر search_gifts للكولكشن/الرقم
       if hasattr(mc, "search_gifts"):
         try:
           fn = mc.search_gifts
@@ -832,7 +830,6 @@ async def fetch_exact_quick_sell_from_mrkt(q_info: dict) -> dict:
             if p_ton is not None:
               listing_prices.append((item_num, p_ton))
 
-            # البحث عن عروض الشراء الفورية إن وجدت داخل الكائن
             for o_attr in ("offers", "quick_sell_offers", "bids"):
               o_list = (
                   it.get(o_attr)
@@ -857,7 +854,6 @@ async def fetch_exact_quick_sell_from_mrkt(q_info: dict) -> dict:
         except Exception:
           pass
 
-      # 2) فحص الأنشطة/العروض عبر get_activities إن توفر
       if result["quick_ton"] is None and hasattr(mc, "get_activities"):
         try:
           act_res = await asyncio.wait_for(mc.get_activities(), timeout=7.0)
@@ -885,7 +881,6 @@ async def fetch_exact_quick_sell_from_mrkt(q_info: dict) -> dict:
         except Exception:
           pass
 
-      # 3) فحص سعر الأرضية من get_collections إذا لم يظهر
       if result["floor_ton"] is None and hasattr(mc, "get_collections"):
         try:
           cols = await asyncio.wait_for(mc.get_collections(), timeout=8.0)
@@ -913,7 +908,7 @@ async def fetch_exact_quick_sell_from_mrkt(q_info: dict) -> dict:
 
 
 def render_quick_sell_card_image(data: dict) -> Optional[bytes]:
-  """يرسم بطاقة كويك سيل شبيهة بتصميم الصورة المرجعية 5764.jpg."""
+  """يرسم بطاقة كويك سيل شبيهة بتصميم الصورة المرجعية."""
   if not PIL_AVAILABLE:
     return None
 
@@ -932,7 +927,6 @@ def render_quick_sell_card_image(data: dict) -> Optional[bytes]:
     font_lg = ImageFont.load_default()
     font_md = ImageFont.load_default()
 
-    # العمود الأيسر: بطاقة الهدية والخصائص
     draw.rounded_rectangle(
         [28, 28, 360, 840], radius=24, fill=card_dark, outline=(52, 56, 64), width=2
     )
@@ -958,7 +952,6 @@ def render_quick_sell_card_image(data: dict) -> Optional[bytes]:
       draw.text((66, y_attr + 38), str(v_label), fill=text_white, font=font_md)
       y_attr += 92
 
-    # العمود الأوسط العلوي: بطاقة Quick sell الصفراء
     quick_val = data.get("quick_ton")
     quick_label = f"{quick_val:g} TON" if quick_val is not None else "N/A"
     draw.rounded_rectangle([384, 28, 718, 434], radius=24, fill=yellow_box)
@@ -968,7 +961,6 @@ def render_quick_sell_card_image(data: dict) -> Optional[bytes]:
     draw.rounded_rectangle([414, 314, 688, 372], radius=12, fill=(255, 226, 78))
     draw.text((516, 335), "Quick sell", fill=text_dark, font=font_md)
 
-    # باقي الشبكة: عروض / أسعار السوق
     floor_val = data.get("floor_ton")
     listings = data.get("listings") or []
     tile_coords = [
@@ -991,7 +983,6 @@ def render_quick_sell_card_image(data: dict) -> Optional[bytes]:
       draw.text((x1 + 22, y1 + 234), sub_num, fill=text_muted, font=font_md)
       draw.text((x1 + 22, y1 + 275), price_str, fill=accent_green, font=font_lg)
 
-    # الشريط السفلي
     draw.text((28, 862), "MRKT · Quick sell", fill=text_muted, font=font_md)
     draw.text((925, 862), "Giftpulse", fill=text_muted, font=font_md)
 
@@ -1614,4 +1605,21 @@ async def inspect_mrkt_content() -> str:
 
 
 def extract_nft_query(text: str):
-  url_match = re.search(r"(https?://t\.me/nft/[^\s]+)
+  url_match = re.search(r"(https?://t\.me/nft/[^\s]+)", text, re.IGNORECASE)
+  if url_match:
+    return url_match.group(1)
+
+  num_match = re.search(r"#\s*(\d{1,9})\b", text)
+  if not num_match:
+    return None
+
+  gift_num = num_match.group(1)
+  for ar_name, slug in AR_TO_SLUG.items():
+    if ar_name in text:
+      return f"https://t.me/nft/{slug}-{gift_num}"
+
+  eng_match = re.search(
+      r"([A-Za-z][A-Za-z\s\-]{1,40}?)\s*#?\s*\d{1,9}\b", text
+  )
+  if eng_match:
+    slug = normalize_slug(eng_match.group(1
