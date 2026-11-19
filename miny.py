@@ -350,19 +350,20 @@ def resolve_slug(title: str, explicit_slug=None) -> str:
 def build_auto_gift_url(
     title: str, gift_number=None, explicit_url=None, slug=None
 ) -> str:
-  """يبني رابط NFT إذا وُجد رقم هدية صحيح، وإلا يوجّه مباشرة إلى سوق MRKT."""
+  """يبني رابط الهدية في تيليجرام (https://t.me/nft/...) لكل اسم هدية أو كولكشن."""
   if explicit_url and explicit_url.strip():
     clean_url = explicit_url.strip()
-    if re.search(r"https?://t\.me/nft/[A-Za-z0-9_]+$", clean_url, re.IGNORECASE):
-      return DEFAULT_MARKET_URL
-    return clean_url
+    if "t.me/nft/" in clean_url.lower():
+      return clean_url
 
+  resolved = resolve_slug(title, slug)
   if gift_number is not None:
     num_str = str(gift_number).strip().lstrip("#")
-    if num_str.isdigit():
-      resolved = resolve_slug(title, slug)
-      if resolved:
-        return f"https://t.me/nft/{resolved}-{num_str}"
+    if num_str.isdigit() and resolved:
+      return f"https://t.me/nft/{resolved}-{num_str}"
+
+  if resolved:
+    return f"https://t.me/nft/{resolved}"
 
   return DEFAULT_MARKET_URL
 
@@ -413,7 +414,7 @@ def refresh_gifts_cache(force: bool = False, max_age: float = 30.0):
     slug = (r.get("slug") or "").strip()
     if len(title) >= 2:
       candidates.append((title, gift_url))
-    if len(slug) >= 3 and slug.lower() != title.lower():
+    if len(slug) >= 2 and slug.lower() != title.lower():
       candidates.append((slug, gift_url))
 
   candidates.sort(key=lambda x: len(x[0]), reverse=True)
@@ -465,7 +466,7 @@ def get_relevant_gifts_summary(user_text: str) -> str:
     slug = (r.get("slug") or "").strip()
     if title and title.lower() in q_low:
       matched.append(r)
-    elif slug and len(slug) >= 3 and slug.lower() in q_low:
+    elif slug and len(slug) >= 2 and slug.lower() in q_low:
       matched.append(r)
 
   budget_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:تون|ton)", q_low)
@@ -1124,31 +1125,31 @@ def handle_admin_update(user_text: str):
 
 
 def linkify_gifts_in_reply(ai_reply: str) -> str:
-  """يحوّل تلقائياً أسماء الكولكشنز/الهدايا خارج وسوم HTML إلى روابط قابلة للضغط."""
+  """يحوّل تلقائياً جميع أسماء الكولكشنز/الهدايا خارج وسوم HTML إلى روابط قابلة للضغط."""
   refresh_gifts_cache(force=False)
   candidates = _GIFTS_CACHE["candidates"]
-  used_urls = set()
+  token_counter = 0
+  link_tokens = {}
 
   def _linkify_plain_segment(segment: str) -> str:
+    nonlocal token_counter
     out = segment
     for label, gift_url in candidates:
-      if gift_url in used_urls:
-        continue
       pattern = re.compile(
           r"(?<![A-Za-z0-9_])" + re.escape(label) + r"(?![A-Za-z0-9_])",
           re.IGNORECASE,
       )
       match = pattern.search(out)
-      if match:
+      while match:
         matched_text = match.group(0)
         start, end = match.span()
-        token = f"__GIFT_LINK_{len(used_urls)}__"
-        used_urls.add(gift_url)
+        token = f"__GIFT_LINK_{token_counter}__"
+        token_counter += 1
         out = out[:start] + token + out[end:]
         link_tokens[token] = f'<a href="{gift_url}">{matched_text}</a>'
+        match = pattern.search(out)
     return out
 
-  link_tokens = {}
   parts = re.split(r"(<a\b[^>]*>.*?</a>)", ai_reply, flags=re.IGNORECASE | re.DOTALL)
   for idx, part in enumerate(parts):
     if not part:
