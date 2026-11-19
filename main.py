@@ -10,6 +10,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL")
 DEVELOPER_USERNAME = "vvopnm8"
+DEVELOPER_NAME = "عباس"
 
 if not TELEGRAM_BOT_TOKEN or not GROQ_API_KEY:
     raise ValueError("Missing TELEGRAM_BOT_TOKEN or GROQ_API_KEY in Railway Variables")
@@ -100,9 +101,9 @@ async def cmd_start(message: types.Message):
     user_conversations.pop(message.from_user.id, None)
     start_text = (
         "اهلاً بك عزيزي معك البوت Giftpulse مختص بهدايا تيليجرام ومايدور حول تيليجرام فقط.\n"
-        f"المطور: @{DEVELOPER_USERNAME}"
+        f'المطور: <a href="https://t.me/{DEVELOPER_USERNAME}">{DEVELOPER_NAME}</a>'
     )
-    await message.answer(start_text, disable_web_page_preview=True)
+    await message.answer(start_text, parse_mode="HTML", disable_web_page_preview=True)
 
 
 @dp.message()
@@ -144,23 +145,4 @@ async def handle_user_message(message: types.Message):
         model_to_use = get_active_model()
         response = client.chat.completions.create(
             model=model_to_use,
-            messages=user_conversations[user_id],
-            temperature=0.15,
-            max_tokens=160
-        )
-        ai_reply = clean_text(response.choices[0].message.content)
-        user_conversations[user_id].append({"role": "assistant", "content": ai_reply})
-        await message.answer(ai_reply, disable_web_page_preview=True)
-    except Exception as e:
-        print(f"Groq/Bot error: {e}")
-        await message.answer("حدث خطأ تقني مؤقت، حاول مجدداً.")
-
-
-async def main():
-    print("Giftpulse Bot is starting...")
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+            messages=user_conversations
