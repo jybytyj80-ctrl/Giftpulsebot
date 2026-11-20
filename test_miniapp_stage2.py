@@ -73,6 +73,8 @@ async def main():
     raw_init_data, init_data_unsafe = parse_tg_web_app_data(web_url)
     print("Obtained WebView URL successfully. Launching headless browser...")
 
+    page_errors: list[str] = []
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
@@ -83,14 +85,62 @@ async def main():
             user_agent="Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
         )
         page = await context.new_page()
+        page.on("pageerror", lambda err: page_errors.append(str(err)))
 
         await page.add_init_script(
             f"""() => {{
                 const rawInitData = {raw_init_data!r};
                 const unsafeData = {json.dumps(init_data_unsafe)};
                 const noop = () => {{}};
+                const posted = [];
+                window.__postedEvents = posted;
+
+                const emitToHost = (eventType, eventData) => {{
+                    window.dispatchEvent(new MessageEvent('message', {{
+                        data: JSON.stringify({{ eventType, eventData }})
+                    }}));
+                    if (window.Telegram && window.Telegram.WebView && typeof window.Telegram.WebView.receiveEvent === 'function') {{
+                        window.Telegram.WebView.receiveEvent(eventType, eventData);
+                    }}
+                }};
+
+                const handlePostEvent = (eventType, rawData) => {{
+                    posted.push(String(eventType));
+                    if (eventType === 'web_app_request_theme') {{
+                        emitToHost('theme_changed', {{
+                            theme_params: {{
+                                bg_color: '#18222d',
+                                text_color: '#ffffff',
+                                hint_color: '#b1c3d5',
+                                link_color: '#6ab2f2',
+                                button_color: '#5288c1',
+                                button_text_color: '#ffffff',
+                                secondary_bg_color: '#131c26'
+                            }}
+                        }});
+                    }} else if (eventType === 'web_app_request_viewport') {{
+                        emitToHost('viewport_changed', {{
+                            height: 900,
+                            width: 1280,
+                            is_state_stable: true,
+                            is_expanded: true
+                        }});
+                    }} else if (eventType === 'web_app_request_safe_area') {{
+                        emitToHost('safe_area_changed', {{ top: 0, bottom: 0, left: 0, right: 0 }});
+                    }} else if (eventType === 'web_app_request_content_safe_area') {{
+                        emitToHost('content_safe_area_changed', {{ top: 0, bottom: 0, left: 0, right: 0 }});
+                    }}
+                }};
+
+                window.TelegramWebviewProxy = {{
+                    postEvent: (eventType, data) => handlePostEvent(eventType, data)
+                }};
 
                 window.Telegram = window.Telegram || {{}};
+                window.Telegram.WebView = {{
+                    receiveEvent: noop,
+                    postEvent: handlePostEvent
+                }};
                 window.Telegram.WebApp = {{
                     initData: rawInitData,
                     initDataUnsafe: unsafeData,
@@ -114,7 +164,7 @@ async def main():
                     close: noop,
                     onEvent: noop,
                     offEvent: noop,
-                    postEvent: noop,
+                    postEvent: handlePostEvent,
                     BackButton: {{ isVisible: false, show: noop, hide: noop, onClick: noop, offClick: noop }},
                     MainButton: {{ text: "", isVisible: false, isActive: true, show: noop, hide: noop, onClick: noop, offClick: noop, setText: noop }},
                     HapticFeedback: {{ impactOccurred: noop, notificationOccurred: noop, selectionChanged: noop }}
@@ -124,25 +174,25 @@ async def main():
 
         try:
             await page.goto(web_url, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(5000)
+            await page.wait_for_timeout(7000)
 
-            around_36451 = await page.evaluate(
-                """async () => {
-                    try {
-                        const r = await fetch('https://cdn.tgmrkt.io/js/app-shared-BZgR15pj.js');
-                        const txt = await r.text();
-                        const lines = txt.split('\\n');
-                        const line2 = lines[1] || txt;
-                        const start = Math.max(0, 36451 - 220);
-                        const end = Math.min(line2.length, 36451 + 180);
-                        return 'len=' + line2.length + ' | ' + line2.slice(start, end);
-                    } catch (e) {
-                        return 'Err: ' + e.message;
-                    }
+            info = await page.evaluate(
+                """() => {
+                    const clone = document.body ? document.body.cloneNode(true) : null;
+                    if (clone) clone.querySelectorAll('style, script').forEach(el => el.remove());
+                    const text = (clone && (clone.innerText || clone.textContent) || '').replace(/\\s+/g, ' ').trim();
+                    return {
+                        postedEvents: window.__postedEvents || [],
+                        textPreview: text.slice(0, 220),
+                        elementsCount: document.querySelectorAll('*').length
+                    };
                 }"""
             )
             await page.screenshot(path=OUT_SCREENSHOT, full_page=False)
-            print("Around 36451:", repr(around_36451))
+            print("Posted events:", info["postedEvents"])
+            print("Page errors:", page_errors[:5])
+            print("Text preview:", repr(info["textPreview"]))
+            print("Elements count:", info["elementsCount"])
             print("Saved screenshot to:", OUT_SCREENSHOT)
         except Exception as e:
             print(f"Browser navigation/screenshot failed: {type(e).__name__}: {e}")
