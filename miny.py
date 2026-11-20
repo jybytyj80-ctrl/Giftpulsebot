@@ -121,6 +121,9 @@ _SYNC_STATUS = {
     "last_error": None,
 }
 
+user_conversations = {}
+user_langs = {} # لتخزين لغة كل مستخدم (ar أو en)
+
 AR_TO_SLUG = {
     "آيس كريم مخروطي": "IceCreamCone",
     "نودلز": "InstantRamen",
@@ -163,8 +166,6 @@ STRICT RULES:
 6. Answer ONLY about Telegram Gifts, Telegram Stars, collectibles, and MRKT. Outside scope: reply in one short line:
    I only specialize in gifts and related topics.
 """
-
-user_conversations = {}
 
 
 def init_db():
@@ -441,7 +442,8 @@ def upsert_gift_in_db(
 
 
 def extract_quick_sell_query(text: str) -> Optional[dict]:
-    m = re.match(r"^quick ((?:https?://)?t\.me/nft/([A-Za-z0-9_]+)-(\d+))$", text.strip(), re.IGNORECASE)
+    # يقبل الكلمة العربية والإنجليزية
+    m = re.match(r"^(?:كويك|quick)\s+((?:https?://)?t\.me/nft/([A-Za-z0-9_]+)-(\d+))$", text.strip(), re.IGNORECASE)
     if not m:
         return None
     raw_url, slug_raw, num_str = m.group(1), m.group(2), m.group(3)
@@ -457,35 +459,17 @@ def _extract_ton_price_from_obj(obj) -> Optional[float]:
     if obj is None:
         return None
     for attr in (
-        "quick_sell_price_ton",
-        "quickSellPriceTon",
-        "quick_price_ton",
-        "quickPriceTon",
-        "offer_price_ton",
-        "offerPriceTon",
-        "price_ton",
-        "priceTon",
-        "floor_price_ton",
-        "floorPriceTon",
-        "price",
-        "amount",
+        "quick_sell_price_ton", "quickSellPriceTon", "quick_price_ton", "quickPriceTon",
+        "offer_price_ton", "offerPriceTon", "price_ton", "priceTon", "floor_price_ton",
+        "floorPriceTon", "price", "amount",
     ):
         val = obj.get(attr) if isinstance(obj, dict) else getattr(obj, attr, None)
         if isinstance(val, (int, float)) and val > 0:
             return round(float(val), 4)
     for nano_attr in (
-        "quick_sell_price_nano_tons",
-        "quickSellPriceNanoTons",
-        "quick_price_nano_tons",
-        "quickPriceNanoTons",
-        "offer_price_nano_tons",
-        "offerPriceNanoTons",
-        "price_nano_tons",
-        "priceNanoTons",
-        "floor_price_nano_tons",
-        "floorPriceNanoTons",
-        "price_nano",
-        "nano_tons",
+        "quick_sell_price_nano_tons", "quickSellPriceNanoTons", "quick_price_nano_tons",
+        "quickPriceNanoTons", "offer_price_nano_tons", "offerPriceNanoTons", "price_nano_tons",
+        "priceNanoTons", "floor_price_nano_tons", "floorPriceNanoTons", "price_nano", "nano_tons",
     ):
         val = obj.get(nano_attr) if isinstance(obj, dict) else getattr(obj, nano_attr, None)
         if isinstance(val, (int, float)) and val > 0:
@@ -1223,10 +1207,10 @@ def _load_clean_fonts():
     reg_path = next((p for p in regular_candidates if os.path.exists(p)), None)
     if bold_path and reg_path:
         return (
-            ImageFont.truetype(bold_path, 72),  # f_title
-            ImageFont.truetype(bold_path, 52),  # f_price
-            ImageFont.truetype(reg_path, 38),   # f_sub
-            ImageFont.truetype(bold_path, 30),  # f_badge
+            ImageFont.truetype(bold_path, 72),
+            ImageFont.truetype(bold_path, 52),
+            ImageFont.truetype(reg_path, 38),
+            ImageFont.truetype(bold_path, 30),
         )
     d = ImageFont.load_default()
     return d, d, d, d
@@ -1440,44 +1424,74 @@ async def render_quick_sell_card_image(data: dict) -> Optional[bytes]:
         return None
 
 
-def build_quick_sell_reply(data: dict) -> str:
+def build_quick_sell_reply(data: dict, lang="ar") -> str:
     num_part = f" #{data['number']}" if data.get("number") else ""
     display_name = f"{data.get('title') or data.get('slug')}{num_part}"
     gift_link = f'<a href="{data["url"]}">{display_name}</a>'
 
     attrs = [a for a in (data.get("model"), data.get("backdrop"), data.get("symbol")) if a]
-    attrs_line = " · ".join(attrs) if attrs else "Gift data from MRKT"
+    attrs_line = " · ".join(attrs) if attrs else ("بيانات الهدية من ماركت" if lang == "ar" else "Gift data from MRKT")
 
     quick_val = data.get("quick_ton")
     floor_val = data.get("floor_ton")
 
-    if quick_val is not None:
-        usd_val = round(float(quick_val) * TON_USD_RATE, 2)
-        quick_line = f"⚡Quick Sell: {quick_val:g} TON ≈ ${usd_val:g}"
-    else:
-        quick_line = "⚡Quick Sell: Not available on MRKT"
+    if lang == "ar":
+        if quick_val is not None:
+            usd_val = round(float(quick_val) * TON_USD_RATE, 2)
+            quick_line = f"⚡البيع الفوري: {quick_val:g} TON ≈ ${usd_val:g}"
+        else:
+            quick_line = "⚡البيع الفوري: غير متوفر حالياً على ماركت"
 
-    if floor_val is not None:
-        floor_line = f"📉Floor Price: {floor_val:g} TON"
-    else:
-        floor_line = "📉Floor Price: Not available"
+        if floor_val is not None:
+            floor_line = f"📉الأرضية: {floor_val:g} TON"
+        else:
+            floor_line = "📉الأرضية: غير متوفرة حالياً"
 
-    if quick_val is not None and floor_val is not None and floor_val > 0:
-        diff_pct = round(((floor_val - quick_val) / floor_val) * 100, 1)
-        relation_line = f"↕ Difference: {diff_pct:g}% below floor" if diff_pct >= 0 else f"↕ Difference: {abs(diff_pct):g}% above floor"
+        if quick_val is not None and floor_val is not None and floor_val > 0:
+            diff_pct = round(((floor_val - quick_val) / floor_val) * 100, 1)
+            relation_line = f"↕ الكويك أقل من الأرضية بـ {diff_pct:g}%" if diff_pct >= 0 else f"↕ الكويك أعلى من الأرضية بـ {abs(diff_pct):g}%"
+        else:
+            relation_line = "↕ نسبة الفرق: غير متاحة"
+            
+        lines = [
+            f"🎁 {gift_link}",
+            attrs_line,
+            "",
+            quick_line,
+            "🎯الطلب على: الكولكشن",
+            floor_line,
+            relation_line,
+            "⏱ 0.5ث · MRKT",
+        ]
     else:
-        relation_line = "↕ Difference: Not available"
+        if quick_val is not None:
+            usd_val = round(float(quick_val) * TON_USD_RATE, 2)
+            quick_line = f"⚡Quick Sell: {quick_val:g} TON ≈ ${usd_val:g}"
+        else:
+            quick_line = "⚡Quick Sell: Not available on MRKT"
 
-    lines = [
-        f"🎁 {gift_link}",
-        attrs_line,
-        "",
-        quick_line,
-        "🎯Demand: Collection",
-        floor_line,
-        relation_line,
-        "⏱ 0.5s · MRKT",
-    ]
+        if floor_val is not None:
+            floor_line = f"📉Floor Price: {floor_val:g} TON"
+        else:
+            floor_line = "📉Floor Price: Not available"
+
+        if quick_val is not None and floor_val is not None and floor_val > 0:
+            diff_pct = round(((floor_val - quick_val) / floor_val) * 100, 1)
+            relation_line = f"↕ Difference: {diff_pct:g}% below floor" if diff_pct >= 0 else f"↕ Difference: {abs(diff_pct):g}% above floor"
+        else:
+            relation_line = "↕ Difference: Not available"
+
+        lines = [
+            f"🎁 {gift_link}",
+            attrs_line,
+            "",
+            quick_line,
+            "🎯Demand: Collection",
+            floor_line,
+            relation_line,
+            "⏱ 0.5s · MRKT",
+        ]
+        
     return "\n".join(lines)
 
 
@@ -1840,25 +1854,63 @@ def linkify_gifts_in_reply(ai_reply: str) -> str:
     return result
 
 
+# دالة لإنشاء أزرار اللغة
+def get_lang_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🇬🇧 English", callback_data="lang_en"),
+            InlineKeyboardButton(text="🇸🇦 العربية", callback_data="lang_ar")
+        ]
+    ])
+
+
 @dp.message(lambda message: message.text and message.text.startswith("/start"))
 async def cmd_start(message: types.Message):
     user_conversations.pop(message.from_user.id, None)
+    lang = user_langs.get(message.from_user.id, "ar")
+    
     text = (
+        "أهلاً بك في Giftpulse — هدايا تيليجرام وسوق "
+        f'<a href="{DEFAULT_MARKET_URL}">ماركت</a>.\n'
+        f'المطور: <a href="https://t.me/{DEVELOPER_USERNAME}">{DEVELOPER_NAME}</a>\n\n'
+        "اختر لغتك المفضلة من الأسفل:"
+    ) if lang == "ar" else (
         "Welcome to Giftpulse — Telegram Gifts and the "
         f'<a href="{DEFAULT_MARKET_URL}">MRKT</a>.\n'
-        f'Developer: <a href="https://t.me/{DEVELOPER_USERNAME}">{DEVELOPER_NAME}</a>'
+        f'Developer: <a href="https://t.me/{DEVELOPER_USERNAME}">{DEVELOPER_NAME}</a>\n\n'
+        "Please choose your preferred language below:"
     )
-    await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.answer(text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=get_lang_keyboard())
+
+
+# معالج زر تغيير اللغة
+@dp.callback_query(lambda c: c.data.startswith("lang_"))
+async def change_lang_callback(callback_query: types.CallbackQuery):
+    lang_code = callback_query.data.split("_")[1]
+    user_langs[callback_query.from_user.id] = lang_code
+    
+    if lang_code == "ar":
+        text = "تم تغيير اللغة إلى العربية بنجاح ✅"
+    else:
+        text = "Language changed to English successfully ✅"
+        
+    await callback_query.answer(text)
+    
+    # تحديث الرسالة لإزالة الأزرار بعد الاختيار
+    await callback_query.message.edit_reply_markup(reply_markup=None)
+    await callback_query.message.answer(text)
 
 
 @dp.message()
 async def handle_user_message(message: types.Message):
     if not message.text:
-        await message.answer("Send a message about gifts, TON, or MRKT.")
+        lang = user_langs.get(message.from_user.id, "ar")
+        await message.answer("أرسل نصاً عن الهدايا أو TON أو ماركت." if lang == "ar" else "Send a message about gifts, TON, or MRKT.")
         return
 
     user_id = message.from_user.id
     user_text = message.text.strip()
+    lang = user_langs.get(user_id, "ar")
 
     if ADMIN_ID is not None and user_id == ADMIN_ID:
         if user_text == "db_status":
@@ -1877,9 +1929,25 @@ async def handle_user_message(message: types.Message):
 
     quick_info = extract_quick_sell_query(user_text)
     if quick_info:
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Open MRKT", url=DEFAULT_MARKET_URL)]])
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="فتح سوق MRKT" if lang == "ar" else "Open MRKT", url=DEFAULT_MARKET_URL)],
+            [InlineKeyboardButton(text="تغيير اللغة 🌐" if lang == "ar" else "Change Language 🌐", callback_data="toggle_lang")]
+        ])
+        
+        # للحصول على الأزرار الصحيحة في التبديل
+        if lang == "ar":
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="فتح سوق MRKT", url=DEFAULT_MARKET_URL)],
+                [InlineKeyboardButton(text="تغيير اللغة 🌐", callback_data="lang_en")]
+            ])
+        else:
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Open MRKT", url=DEFAULT_MARKET_URL)],
+                [InlineKeyboardButton(text="Change Language 🌐", callback_data="lang_ar")]
+            ])
+
         exact_data = await fetch_exact_quick_sell_from_mrkt(quick_info)
-        caption_txt = build_quick_sell_reply(exact_data)
+        caption_txt = build_quick_sell_reply(exact_data, lang=lang)
         card_bytes = await render_quick_sell_card_image(exact_data)
         if card_bytes:
             await message.answer_photo(photo=BufferedInputFile(card_bytes, filename="quick_sell_card.png"), caption=caption_txt, parse_mode="HTML", reply_markup=kb)
@@ -1889,7 +1957,7 @@ async def handle_user_message(message: types.Message):
 
     nft_link = extract_nft_query(user_text)
     if nft_link:
-        await message.answer(f'Gift link: <a href="{nft_link}">Open Gift</a>', parse_mode="HTML", disable_web_page_preview=True)
+        await message.answer(f'رابط الهدية: <a href="{nft_link}">فتح الهدية</a>' if lang == "ar" else f'Gift link: <a href="{nft_link}">Open Gift</a>', parse_mode="HTML", disable_web_page_preview=True)
         return
 
     if user_id not in user_conversations:
@@ -1914,14 +1982,25 @@ async def handle_user_message(message: types.Message):
         user_conversations[user_id].append({"role": "assistant", "content": ai_reply})
 
         linked_reply = linkify_gifts_in_reply(ai_reply)
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Open MRKT", url=DEFAULT_MARKET_URL)]])
+        
+        if lang == "ar":
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="فتح سوق MRKT", url=DEFAULT_MARKET_URL)],
+                [InlineKeyboardButton(text="تغيير اللغة 🌐", callback_data="lang_en")]
+            ])
+        else:
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Open MRKT", url=DEFAULT_MARKET_URL)],
+                [InlineKeyboardButton(text="Change Language 🌐", callback_data="lang_ar")]
+            ])
+
         try:
             await message.answer(linked_reply, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
         except Exception:
             await message.answer(re.sub(r"<[^>]+>", "", linked_reply), reply_markup=kb, disable_web_page_preview=True)
     except Exception as e:
         print(f"Groq/Bot error: {e}")
-        await message.answer("A temporary technical error occurred, please try again.")
+        await message.answer("حدث خطأ تقني مؤقت، حاول مجدداً." if lang == "ar" else "A temporary technical error occurred, please try again.")
 
 
 async def main():
