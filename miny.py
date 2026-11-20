@@ -1174,4 +1174,4 @@ async def fetch_exact_quick_sell_from_mrkt(q_info: dict) -> dict:
                     if target_num is not None and item_num == target_num:
                         continue
                     item_slug_clean = normalize_slug(col_name_exact) or target_slug
-                    item_url = f"https://t.me
+                    item_url = f"https://t.me/nft/{item_slug_clean}-{item_num}" if item_num else None
