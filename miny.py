@@ -701,9 +701,6 @@ async def _fetch_gift_artwork_image(url: Optional[str]) -> Optional[Image.Image]
 
 
 def _crop_and_fit_artwork(art_img: Optional[Image.Image], box_w: int, box_h: int) -> Optional[Image.Image]:
-    """
-    Crops and scales artwork cleanly to fill (box_w, box_h) centered on the subject.
-    """
     if not PIL_AVAILABLE or art_img is None or box_w <= 0 or box_h <= 0:
         return None
     src_img = art_img.convert("RGBA")
@@ -711,7 +708,6 @@ def _crop_and_fit_artwork(art_img: Optional[Image.Image], box_w: int, box_h: int
     if src_w <= 0 or src_h <= 0:
         return None
 
-    # Trim outer uniform margin if present so the gift itself fills the crop tightly
     try:
         alpha = src_img.getchannel("A")
         bbox = alpha.getbbox()
@@ -834,7 +830,6 @@ def _extract_listing_price_ton(obj) -> Optional[float]:
         if isinstance(v, str) and v.strip().isdigit() and int(v.strip()) > 0:
             return round(int(v.strip()) / 1e9, 4)
 
-    # Fallback: scan any remaining numeric *_nano_tons / *_ton / *_price attribute on object
     raw_dict = obj if isinstance(obj, dict) else getattr(obj, "__dict__", {}) or {}
     if isinstance(raw_dict, dict):
         for k, v in raw_dict.items():
@@ -930,9 +925,6 @@ def _extract_quick_offer_price_ton(obj) -> Optional[float]:
 
 
 async def _fetch_tg_nft_meta_and_image(nft_url: str) -> dict:
-    """
-    Fetch real gift artwork image and attributes directly from Telegram's public t.me/nft/<slug>-<num> page.
-    """
     info = {
         "image_url": None,
         "model": None,
@@ -1174,4 +1166,14 @@ async def fetch_exact_quick_sell_from_mrkt(q_info: dict) -> dict:
                     if target_num is not None and item_num == target_num:
                         continue
                     item_slug_clean = normalize_slug(col_name_exact) or target_slug
-                    item_url = f"https://t.me/nft/{item_slug_clean}-{item_num}" if item_num else None
+                    
+                    if item_num:
+                        item_url = "https://t.me/nft/" + str(item_slug_clean) + "-" + str(item_num)
+                    else:
+                        item_url = None
+                        
+                    listings_pool.append({
+                        "title": result["title"],
+                        "number": item_num,
+                        "price": p_ton,
+                        "mo
