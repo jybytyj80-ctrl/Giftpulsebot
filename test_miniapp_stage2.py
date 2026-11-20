@@ -1,7 +1,5 @@
 import asyncio
-import json
 import os
-from urllib.parse import parse_qs, unquote, urlparse
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import RequestWebViewRequest
@@ -17,29 +15,6 @@ OUT_SCREENSHOT = os.getenv("OUT_SCREENSHOT", "stage2_view.png").strip()
 
 def log(msg: str) -> None:
     print(msg, flush=True)
-
-
-def parse_tg_web_app_data(web_url: str) -> tuple[str, dict]:
-    parsed = urlparse(web_url)
-    params = parse_qs(parsed.fragment or "")
-    raw_init_data = unquote(params.get("tgWebAppData", [""])[0])
-    unsafe: dict = {"start_param": TEST_NFT_URL.split("/")[-1]}
-
-    if raw_init_data:
-        inner = parse_qs(raw_init_data, keep_blank_values=True)
-        for k, vals in inner.items():
-            if not vals:
-                continue
-            v = vals[0]
-            if k == "user":
-                try:
-                    unsafe["user"] = json.loads(v)
-                except Exception:
-                    unsafe["user"] = v
-            else:
-                unsafe[k] = v
-
-    return raw_init_data, unsafe
 
 
 async def get_webview_url() -> str | None:
@@ -74,9 +49,7 @@ async def main():
         log("ERROR: Failed to obtain WebView URL")
         return
 
-    raw_init_data, init_data_unsafe = parse_tg_web_app_data(web_url)
     log("Obtained WebView URL successfully. Launching headless browser...")
-
     page_errors: list[str] = []
 
     async with async_playwright() as p:
@@ -84,129 +57,25 @@ async def main():
             headless=True,
             args=["--no-sandbox", "--disable-dev-shm-usage"],
         )
-        context = await browser.new_context(
-            viewport={"width": 1280, "height": 900},
-            user_agent="Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-        )
-        page = await context.new_page()
+        page = await browser.new_page()
         page.on("pageerror", lambda err: page_errors.append(str(err)))
-
-        await page.add_init_script(
-            f"""() => {{
-                const rawInitData = {raw_init_data!r};
-                const unsafeData = {json.dumps(init_data_unsafe)};
-                const noop = () => {{}};
-                const posted = [];
-                window.__postedEvents = posted;
-
-                const dispatchHostEvent = (eventType, eventData) => {{
-                    const payload = JSON.stringify({{ eventType, eventData }});
-                    window.dispatchEvent(new MessageEvent('message', {{ data: payload }}));
-                    if (window.Telegram && window.Telegram.WebView && typeof window.Telegram.WebView.receiveEvent === 'function') {{
-                        window.Telegram.WebView.receiveEvent(eventType, eventData);
-                    }}
-                }};
-
-                const onPostEvent = (eventType, rawData) => {{
-                    posted.push(String(eventType));
-                    let parsed = {{}};
-                    try {{
-                        parsed = typeof rawData === 'string' ? JSON.parse(rawData) : (rawData || {{}});
-                    }} catch (_) {{}}
-                    const reqId = parsed && parsed.req_id;
-
-                    setTimeout(() => {{
-                        if (reqId !== undefined) {{
-                            dispatchHostEvent('custom_method_invoked', {{ req_id: reqId, result: {{}} }});
-                        }}
-                        dispatchHostEvent('finalized', {{ req_id: reqId, event: eventType, payload: parsed }});
-                        if (eventType === 'web_app_request_theme') {{
-                            dispatchHostEvent('theme_changed', {{
-                                theme_params: {{
-                                    bg_color: '#18222d',
-                                    text_color: '#ffffff',
-                                    hint_color: '#b1c3d5',
-                                    link_color: '#6ab2f2',
-                                    button_color: '#5288c1',
-                                    button_text_color: '#ffffff',
-                                    secondary_bg_color: '#131c26'
-                                }}
-                            }});
-                        }} else if (eventType === 'web_app_request_viewport') {{
-                            dispatchHostEvent('viewport_changed', {{
-                                height: 900,
-                                width: 1280,
-                                is_state_stable: true,
-                                is_expanded: true
-                            }});
-                        }}
-                    }}, 0);
-                }};
-
-                window.TelegramWebviewProxy = {{
-                    postEvent: (eventType, data) => onPostEvent(eventType, data)
-                }};
-
-                window.Telegram = window.Telegram || {{}};
-                window.Telegram.WebView = {{
-                    receiveEvent: noop,
-                    postEvent: onPostEvent
-                }};
-                window.Telegram.WebApp = {{
-                    initData: rawInitData,
-                    initDataUnsafe: unsafeData,
-                    version: "8.0",
-                    platform: "android",
-                    colorScheme: "dark",
-                    themeParams: {{
-                        bg_color: "#18222d",
-                        text_color: "#ffffff",
-                        hint_color: "#b1c3d5",
-                        link_color: "#6ab2f2",
-                        button_color: "#5288c1",
-                        button_text_color: "#ffffff",
-                        secondary_bg_color: "#131c26"
-                    }},
-                    isExpanded: true,
-                    viewportHeight: 900,
-                    viewportStableHeight: 900,
-                    ready: noop,
-                    expand: noop,
-                    close: noop,
-                    onEvent: noop,
-                    offEvent: noop,
-                    postEvent: onPostEvent,
-                    BackButton: {{ isVisible: false, show: noop, hide: noop, onClick: noop, offClick: noop }},
-                    MainButton: {{ text: "", isVisible: false, isActive: true, show: noop, hide: noop, onClick: noop, offClick: noop, setText: noop }},
-                    HapticFeedback: {{ impactOccurred: noop, notificationOccurred: noop, selectionChanged: noop }}
-                }};
-            }}"""
-        )
 
         try:
             await page.goto(web_url, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(7000)
+            await page.wait_for_timeout(5000)
 
-            info = await page.evaluate(
-                """() => {
-                    const pre = document.querySelector('#preloader');
-                    const preHidden = !pre || pre.classList.contains('preloader-hidden') || getComputedStyle(pre).display === 'none';
-                    const clone = document.body ? document.body.cloneNode(true) : null;
-                    if (clone) clone.querySelectorAll('style, script').forEach(el => el.remove());
-                    const text = (clone && (clone.innerText || clone.textContent) || '').replace(/\\s+/g, ' ').trim();
-                    return {
-                        postedEvents: (window.__postedEvents || []).slice(0, 15),
-                        preHidden,
-                        textPreview: text.slice(0, 220),
-                        elementsCount: document.querySelectorAll('*').length
-                    };
+            before_vn = await page.evaluate(
+                """async () => {
+                    const r = await fetch('https://cdn.tgmrkt.io/js/app-shared-BZgR15pj.js');
+                    const txt = await r.text();
+                    const idx = txt.indexOf('function Vn(');
+                    if (idx === -1) return 'function Vn( not found';
+                    return txt.slice(Math.max(0, idx - 900), idx + 120);
                 }"""
             )
             await page.screenshot(path=OUT_SCREENSHOT, full_page=False)
-            log(f"Posted events: {info['postedEvents']}")
             log(f"Page errors: {page_errors[:5]}")
-            log(f"Preloader hidden: {info['preHidden']} | Elements: {info['elementsCount']}")
-            log(f"Text preview: {info['textPreview']!r}")
+            log(f"BEFORE_VN: {before_vn}")
             log(f"Saved screenshot to: {OUT_SCREENSHOT}")
         except Exception as e:
             log(f"Browser navigation/screenshot failed: {type(e).__name__}: {e}")
