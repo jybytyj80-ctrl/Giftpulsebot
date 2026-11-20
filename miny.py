@@ -1176,4 +1176,793 @@ async def fetch_exact_quick_sell_from_mrkt(q_info: dict) -> dict:
                         "title": result["title"],
                         "number": item_num,
                         "price": p_ton,
-                        "mo
+                        "model": it_model,
+                        "backdrop": it_backdrop,
+                        "symbol": it_symbol,
+                        "image_url": it_img,
+                        "url": item_url,
+                    })
+
+            listings_pool.sort(key=lambda x: x["price"])
+            top_three = listings_pool[:3]
+            for entry in top_three:
+                if not entry.get("image_url") and entry.get("number"):
+                    slug_for_sub = normalize_slug(col_name_exact) or target_slug
+                    sub_url = "https://t.me/nft/" + str(slug_for_sub) + "-" + str(entry["number"])
+                    sub_meta = await _fetch_tg_nft_meta_and_image(sub_url)
+                    if sub_meta.get("image_url"):
+                        entry["image_url"] = sub_meta["image_url"]
+
+            if result["quick_ton"] is None:
+                top_order_ton, top_order_dbg = await fetch_top_order_ton(col_name_exact)
+                print(f"[QUICK_DEBUG] top_order={top_order_ton} | {top_order_dbg[:300]}", flush=True)
+                if top_order_ton is not None:
+                    result["quick_ton"] = top_order_ton
+                    result["source"] = "mrkt_live"
+
+            result["cheapest_three"] = top_three
+            if top_three:
+                if result["floor_ton"] is None:
+                    result["floor_ton"] = top_three[0]["price"]
+                result["source"] = "mrkt_live"
+            if offer_prices:
+                result["quick_ton"] = max(offer_prices)
+                result["source"] = "mrkt_live"
+            print(f"[QUICK_DEBUG] done quick_ton={result['quick_ton']} floor_ton={result['floor_ton']} cheapest_three={[(x.get('number'), x.get('price'), bool(x.get('image_url'))) for x in top_three]}", flush=True)
+    except Exception as e:
+        print(f"[QUICK_DEBUG] MarketClient exception: {type(e).__name__}: {e}", flush=True)
+
+    return result
+
+
+def _prepare_text(text) -> str:
+    if text is None:
+        return ""
+    s = str(text)
+    if not s or not ARABIC_SHAPING_AVAILABLE:
+        return s
+    if not re.search(r"[\u0600-\u06FF]", s):
+        return s
+    try:
+        return get_display(arabic_reshaper.reshape(s))
+    except Exception:
+        return s
+
+
+def _load_clean_fonts():
+    font_candidates = [
+        "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    ]
+    regular_candidates = [
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    ]
+    bold_path = next((p for p in font_candidates if os.path.exists(p)), None)
+    reg_path = next((p for p in regular_candidates if os.path.exists(p)), None)
+    if bold_path and reg_path:
+        return (
+            ImageFont.truetype(bold_path, 64), 
+            ImageFont.truetype(bold_path, 44), 
+            ImageFont.truetype(reg_path, 30),   
+            ImageFont.truetype(bold_path, 24), 
+        )
+    d = ImageFont.load_default()
+    return d, d, d, d
+
+
+def _draw_clipboard_icon(draw: ImageDraw.ImageDraw, cx: int, cy: int, color_rgb: tuple):
+    draw.rounded_rectangle([cx - 34, cy - 38, cx + 34, cy + 44], radius=10, fill=color_rgb)
+    draw.rounded_rectangle([cx - 16, cy - 48, cx + 16, cy - 28], radius=6, fill=color_rgb)
+    draw.rounded_rectangle([cx - 20, cy - 16, cx - 10, cy - 7], radius=2, fill=(246, 204, 24))
+    draw.rounded_rectangle([cx - 2, cy - 14, cx + 20, cy - 8], radius=2, fill=(246, 204, 24))
+    draw.rounded_rectangle([cx - 20, cy + 5, cx - 10, cy + 14], radius=2, fill=(246, 204, 24))
+    draw.rounded_rectangle([cx - 2, cy + 7, cx + 20, cy + 13], radius=2, fill=(246, 204, 24))
+
+
+def _draw_cart_icon(draw: ImageDraw.ImageDraw, x_right: int, y_mid: int, color_rgb: tuple):
+    draw.line([(x_right - 38, y_mid - 16), (x_right - 29, y_mid - 16), (x_right - 23, y_mid + 5), (x_right - 6, y_mid + 5)], fill=color_rgb, width=3)
+    draw.line([(x_right - 26, y_mid - 8), (x_right - 5, y_mid - 8), (x_right - 7, y_mid + 5)], fill=color_rgb, width=2)
+    draw.ellipse([x_right - 25, y_mid + 9, x_right - 18, y_mid + 16], fill=color_rgb)
+    draw.ellipse([x_right - 12, y_mid + 9, x_right - 5, y_mid + 16], fill=color_rgb)
+
+
+def _draw_filter_icon(draw: ImageDraw.ImageDraw, x_left: int, y_mid: int, color_rgb: tuple):
+    draw.line([(x_left, y_mid - 10), (x_left + 22, y_mid - 10)], fill=color_rgb, width=3)
+    draw.line([(x_left + 4, y_mid), (x_left + 18, y_mid)], fill=color_rgb, width=3)
+    draw.line([(x_left + 8, y_mid + 10), (x_left + 14, y_mid + 10)], fill=color_rgb, width=3)
+
+
+def _format_clean_ton(val) -> str:
+    if val is None:
+        return ""
+    try:
+        fval = float(val)
+    except Exception:
+        return str(val)
+    rounded = round(fval, 2)
+    return f"{rounded:g}"
+
+
+def _paste_fetched_photo_only(
+    canvas_img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    frame_rgb: tuple,
+    art_img: Optional[Image.Image],
+    radius: int = 20,
+):
+    draw.rounded_rectangle([x1, y1, x2, y2], radius=radius, fill=frame_rgb)
+    if art_img is None:
+        return
+    box_w = max(1, x2 - x1)
+    box_h = max(1, y2 - y1)
+    cropped = _crop_and_fit_artwork(art_img, box_w, box_h)
+    if cropped is None:
+        return
+
+    mask = Image.new("L", (box_w, box_h), 0)
+    mdraw = ImageDraw.Draw(mask)
+    mdraw.rounded_rectangle([0, 0, box_w, box_h], radius=radius, fill=255)
+    canvas_img.paste(cropped, (x1, y1), mask)
+
+
+def _compose_gift_info_panel(img: Image.Image, draw: ImageDraw.ImageDraw, data: dict, main_art: Optional[Image.Image], fonts: tuple):
+    f_title, f_price, f_sub, f_badge = fonts
+    title_txt = str(data.get("title") or data.get("slug") or "")
+    num_txt = f"#{data['number']}" if data.get("number") else ""
+
+    draw.rounded_rectangle([18, 18, 412, 954], radius=28, fill=(28, 31, 36))
+    _paste_fetched_photo_only(img, draw, 28, 28, 402, 410, (28, 31, 36), main_art, radius=24)
+    
+    if main_art is not None:
+        draw.rounded_rectangle([310, 44, 390, 84], radius=8, fill=(18, 20, 24))
+        draw.text((325, 52), "MRKT", fill=(246, 204, 24), font=f_badge)
+
+    if title_txt:
+        draw.text((30, 426), _prepare_text(title_txt[:18]), fill=(248, 250, 252), font=f_title)
+    if num_txt:
+        draw.text((30, 500), _prepare_text(num_txt), fill=(168, 176, 188), font=f_price)
+
+    attrs = [
+        ("Model", data.get("model"), data.get("model_rarity")),
+        ("Backdrop", data.get("backdrop"), data.get("backdrop_rarity")),
+        ("Symbol", data.get("symbol"), data.get("symbol_rarity")),
+    ]
+    y_attr = 560
+    for k_label, v_label, r_label in attrs:
+        draw.rounded_rectangle([30, y_attr, 400, y_attr + 100], radius=16, fill=(38, 42, 49))
+        draw.text((48, y_attr + 14), k_label, fill=(155, 163, 175), font=f_badge)
+        
+        if v_label:
+            draw.text((48, y_attr + 50), _prepare_text(str(v_label)[:18]), fill=(248, 250, 252), font=f_price)
+        if r_label:
+            rb = draw.textbbox((0, 0), str(r_label), font=f_badge)
+            draw.text((380 - (rb[2] - rb[0]), y_attr + 14), str(r_label), fill=(246, 204, 24), font=f_badge)
+        y_attr += 115
+
+    if data.get("model"):
+        _draw_filter_icon(draw, 34, 918, (248, 250, 252))
+        draw.rounded_rectangle([72, 890, 350, 946], radius=13, fill=(38, 42, 49))
+        pill_txt = f"{data.get('model')}  ×"
+        draw.text((92, 905), _prepare_text(pill_txt[:20]), fill=(246, 204, 24), font=f_badge)
+
+
+def _compose_quick_sell_panel(img: Image.Image, draw: ImageDraw.ImageDraw, quick_val, fonts: tuple):
+    f_title, f_price, f_sub, f_badge = fonts
+    draw.rounded_rectangle([430, 18, 806, 480], radius=28, fill=(28, 31, 36))
+    draw.rounded_rectangle([430, 18, 806, 276], radius=28, fill=(246, 204, 24))
+    cx_y = (430 + 806) // 2
+    
+    draw.ellipse([756, 36, 786, 66], fill=(20, 22, 26))
+    draw.text((765, 37), "!", fill=(246, 204, 24), font=f_price)
+    _draw_clipboard_icon(draw, cx_y, 90, (20, 22, 26))
+
+    if quick_val is not None:
+        quick_str = f"{_format_clean_ton(quick_val)} TON"
+        q_bbox = draw.textbbox((0, 0), quick_str, font=f_title)
+        q_w = q_bbox[2] - q_bbox[0]
+        draw.polygon([(cx_y - q_w // 2 - 30, 175), (cx_y - q_w // 2 - 15, 155), (cx_y - q_w // 2, 175), (cx_y - q_w // 2 - 15, 195)], fill=(20, 22, 26))
+        draw.text((cx_y - q_w // 2 + 8, 145), quick_str, fill=(20, 22, 26), font=f_title)
+    else:
+        no_price = "غير متوفر"
+        q_bbox = draw.textbbox((0, 0), no_price, font=f_title)
+        q_w = q_bbox[2] - q_bbox[0]
+        draw.text((cx_y - q_w // 2, 145), _prepare_text(no_price), fill=(20, 22, 26), font=f_title)
+
+    sub_q = "Any gift of this collection"
+    sq_bbox = draw.textbbox((0, 0), sub_q, font=f_badge)
+    draw.text((cx_y - (sq_bbox[2] - sq_bbox[0]) // 2, 220), sub_q, fill=(68, 58, 20), font=f_badge)
+
+    draw.rounded_rectangle([452, 294, 784, 362], radius=14, fill=(44, 48, 55))
+    ao_label = "All Orders"
+    ao_bbox = draw.textbbox((0, 0), ao_label, font=f_price)
+    draw.text((cx_y - (ao_bbox[2] - ao_bbox[0]) // 2, 310), ao_label, fill=(248, 250, 252), font=f_price)
+
+    draw.rounded_rectangle([452, 380, 784, 456], radius=14, fill=(255, 231, 96))
+    qb_label = "Quick sell"
+    qb_bbox = draw.textbbox((0, 0), qb_label, font=f_price)
+    draw.text((cx_y - (qb_bbox[2] - qb_bbox[0]) // 2, 400), qb_label, fill=(20, 22, 26), font=f_price)
+
+
+def _compose_cheapest_gift_card(img: Image.Image, draw: ImageDraw.ImageDraw, box: tuple, item: Optional[dict], art_img: Optional[Image.Image], default_title: str, fonts: tuple):
+    _, f_price, f_sub, _ = fonts
+    x1, y1, x2, y2 = box
+    draw.rounded_rectangle([x1, y1, x2, y2], radius=26, fill=(28, 31, 36))
+    if item is None:
+        return
+        
+    art_bottom = y1 + 260 
+    _paste_fetched_photo_only(img, draw, x1 + 14, y1 + 14, x2 - 14, art_bottom, (28, 31, 36), art_img, radius=20)
+    
+    c_title = str(item.get("title") or default_title)[:16]
+    c_num = f"#{item['number']}" if item.get("number") else ""
+    c_price = _format_clean_ton(item.get("price"))
+    
+    if c_title:
+        draw.text((x1 + 20, art_bottom + 20), _prepare_text(c_title), fill=(248, 250, 252), font=f_price)
+    if c_num:
+        draw.text((x1 + 20, art_bottom + 75), _prepare_text(c_num), fill=(162, 170, 182), font=f_sub)
+    if c_price:
+        py_row = y2 - 40
+        draw.polygon([(x1 + 22, py_row), (x1 + 32, py_row - 12), (x1 + 42, py_row), (x1 + 32, py_row + 12)], fill=(248, 250, 252))
+        draw.text((x1 + 55, y2 - 62), _prepare_text(c_price), fill=(248, 250, 252), font=f_price)
+        _draw_cart_icon(draw, x2 - 20, py_row, (162, 170, 182))
+
+
+async def render_quick_sell_card_image(data: dict) -> Optional[bytes]:
+    if not PIL_AVAILABLE:
+        return None
+    try:
+        cheapest_three = data.get("cheapest_three") or []
+        main_art = await _fetch_gift_artwork_image(data.get("image_url"))
+        sub_arts = []
+        for idx in range(3):
+            u = cheapest_three[idx].get("image_url") if idx < len(cheapest_three) else None
+            sub_img = await _fetch_gift_artwork_image(u) if u else None
+            if sub_img is None and idx < len(cheapest_three) and main_art is not None:
+                sub_img = main_art.copy()
+            sub_arts.append(sub_img)
+
+        w, h = 1200, 1020
+        img = Image.new("RGB", (w, h), (15, 17, 21))
+        draw = ImageDraw.Draw(img)
+        fonts = _load_clean_fonts()
+        _, _, f_sub, _ = fonts
+
+        title_txt = str(data.get("title") or data.get("slug") or "")
+        quick_val = data.get("quick_ton")
+
+        _compose_gift_info_panel(img, draw, data, main_art, fonts)
+        _compose_quick_sell_panel(img, draw, quick_val, fonts)
+
+        cheap_boxes = [
+            (824, 18, 1182, 480),
+            (430, 498, 806, 954),
+            (824, 498, 1182, 954),
+        ]
+        for idx, box in enumerate(cheap_boxes):
+            item = cheapest_three[idx] if idx < len(cheapest_three) else None
+            _compose_cheapest_gift_card(img, draw, box, item, sub_arts[idx], title_txt, fonts)
+
+        draw.text((20, 976), "MRKT · Quick sell", fill=(155, 163, 175), font=f_sub)
+        draw.text((1035, 976), _prepare_text("00:44 · صيرفة"), fill=(155, 163, 175), font=f_sub)
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception as e:
+        print(f"[CROP_DEBUG] render error: {type(e).__name__}: {e}", flush=True)
+        return None
+
+
+def build_quick_sell_reply(data: dict) -> str:
+    num_part = f" #{data['number']}" if data.get("number") else ""
+    display_name = f"{data.get('title') or data.get('slug')}{num_part}"
+    gift_link = f'<a href="{data["url"]}">{display_name}</a>'
+
+    attrs = [a for a in (data.get("model"), data.get("backdrop"), data.get("symbol")) if a]
+    attrs_line = " · ".join(attrs) if attrs else "بيانات الهدية من ماركت"
+
+    quick_val = data.get("quick_ton")
+    floor_val = data.get("floor_ton")
+
+    if quick_val is not None:
+        usd_val = round(float(quick_val) * TON_USD_RATE, 2)
+        quick_line = f"⚡البيع الفوري: {quick_val:g} TON ≈ ${usd_val:g}"
+    else:
+        quick_line = "⚡البيع الفوري: غير متوفر حالياً على ماركت"
+
+    if floor_val is not None:
+        floor_line = f"📉الأرضية: {floor_val:g} TON"
+    else:
+        floor_line = "📉الأرضية: غير متوفرة حالياً"
+
+    if quick_val is not None and floor_val is not None and floor_val > 0:
+        diff_pct = round(((floor_val - quick_val) / floor_val) * 100, 1)
+        relation_line = f"↕ الكويك أقل من الأرضية بـ {diff_pct:g}%" if diff_pct >= 0 else f"↕ الكويك أعلى من الأرضية بـ {abs(diff_pct):g}%"
+    else:
+        relation_line = "↕ نسبة الفرق: غير متاحة"
+
+    lines = [
+        f"🎁 {gift_link}",
+        attrs_line,
+        "",
+        quick_line,
+        "🎯الطلب على: الكولكشن",
+        floor_line,
+        relation_line,
+        "⏱ 0.5ث · MRKT",
+    ]
+    return "\n".join(lines)
+
+
+def mrkt_session_path() -> str:
+    return os.path.join(MRKT_SESSION_DIR, "mrkt.session")
+
+
+def restore_mrkt_session_from_env():
+    path = mrkt_session_path()
+    if not MRKT_SESSION_B64:
+        return
+    try:
+        os.makedirs(MRKT_SESSION_DIR, exist_ok=True)
+        cleaned = "".join(MRKT_SESSION_B64.split())
+        if len(cleaned) % 4:
+            cleaned += "=" * (4 - (len(cleaned) % 4))
+        raw = base64.b64decode(cleaned)
+        if raw[:2] == b"\x1f\x8b":
+            raw = gzip.decompress(raw)
+        with open(path, "wb") as f:
+            f.write(raw)
+    except Exception as e:
+        print(f"MRKT session restore error: {e}")
+
+
+def save_collection_price(cur, name, title, floor_ton, gift_number=None):
+    clean_title = (title or name or "").strip()
+    slug = normalize_slug(name or "") or normalize_slug(clean_title)
+    if not slug or floor_ton is None or floor_ton <= 0:
+        return
+    display_title = prettify_slug_title(clean_title or slug)
+
+    cur.execute("SELECT id, gift_number, custom_url FROM gifts WHERE LOWER(slug) = LOWER(?)", (slug,))
+    row = cur.fetchone()
+    if row:
+        effective_num = gift_number if gift_number is not None else row[1]
+        auto_url = build_auto_gift_url(title=display_title, gift_number=effective_num, explicit_url=row[2], slug=slug)
+        cur.execute(
+            "UPDATE gifts SET ton = ?, floor_price = ?, gift_number = ?, slug = COALESCE(slug, ?), custom_url = ? WHERE id = ?",
+            (floor_ton, floor_ton, effective_num, slug, auto_url, row[0]),
+        )
+    else:
+        auto_url = build_auto_gift_url(title=display_title, gift_number=gift_number, slug=slug)
+        cur.execute(
+            "INSERT OR IGNORE INTO gifts (title, slug, ton, floor_price, gift_number, custom_url) VALUES (?, ?, ?, ?, ?, ?)",
+            (display_title, slug, floor_ton, floor_ton, gift_number, auto_url),
+        )
+
+
+def _parse_gift_slug_and_number(gift_obj) -> Optional[int]:
+    if gift_obj is None:
+        return None
+    raw_name = gift_obj.get("name") if isinstance(gift_obj, dict) else getattr(gift_obj, "name", None)
+    if isinstance(raw_name, str) and raw_name.strip():
+        m = re.search(r"-(\d{1,9})$", raw_name.strip())
+        if m and int(m.group(1)) > 0:
+            return int(m.group(1))
+    return None
+
+
+async def _fetch_gift_number_via_search(mc, col) -> Optional[int]:
+    if not FETCH_GIFT_NUMBERS:
+        return None
+    fn = getattr(mc, "search_gifts", None)
+    if not callable(fn):
+        return None
+    col_name = (getattr(col, "name", "") or "").strip()
+    col_title = (getattr(col, "title", "") or "").strip()
+    col_slug = normalize_slug(col_name or col_title)
+    try:
+        params = inspect.signature(fn).parameters
+    except Exception:
+        params = {}
+
+    seen = set()
+    for q in (col_name, col_title, col_slug):
+        if not q or q.lower() in seen:
+            continue
+        seen.add(q.lower())
+        kwargs = {}
+        for key in ("name", "title", "collection", "collection_name", "slug", "query", "search"):
+            if key in params:
+                kwargs[key] = q
+                break
+        for l_key in ("limit", "count", "page_size"):
+            if l_key in params:
+                kwargs[l_key] = 3
+                break
+        try:
+            res = await asyncio.wait_for(fn(**kwargs) if kwargs else fn(q), timeout=6.0)
+            items = res if isinstance(res, list) else (
+                next((res[k] for k in ("items", "gifts", "results", "data") if isinstance(res, dict) and isinstance(res.get(k), list)), None)
+                or next((getattr(res, a) for a in ("items", "gifts", "results", "data") if isinstance(getattr(res, a, None), list)), [])
+            )
+            for item in items:
+                g_num = _parse_gift_slug_and_number(item)
+                if g_num is not None:
+                    return g_num
+        except Exception:
+            continue
+    return None
+
+
+async def sync_prices_from_mrkt() -> int:
+    if not (API_ID_ENV.isdigit() and API_HASH_ENV):
+        raise RuntimeError("TG_API_ID / TG_API_HASH غير مكتملة.")
+
+    async with _SYNC_LOCK:
+        try:
+            fetched_records = []
+            numbers_found = 0
+            async with MarketClient(api_id=int(API_ID_ENV), api_hash=API_HASH_ENV, session_name="mrkt", workdir=MRKT_SESSION_DIR) as mc:
+                cols = await asyncio.wait_for(mc.get_collections(), timeout=20.0)
+                for c in cols:
+                    if getattr(c, "is_hidden", False):
+                        continue
+                    floor_ton = getattr(c, "floor_price_ton", None)
+                    if floor_ton is None:
+                        floor_nano = getattr(c, "floor_price_nano_tons", None)
+                        if isinstance(floor_nano, (int, float)) and floor_nano > 0:
+                            floor_ton = floor_nano / 1e9
+                    if floor_ton is not None and floor_ton > 0:
+                        gift_num = await _fetch_gift_number_via_search(mc, c)
+                        if gift_num is not None:
+                            numbers_found += 1
+                        fetched_records.append((getattr(c, "name", ""), getattr(c, "title", ""), floor_ton, gift_num))
+                        if FETCH_GIFT_NUMBERS:
+                            await asyncio.sleep(0.08)
+
+            conn = get_db_conn(row_factory=False)
+            try:
+                cur = conn.cursor()
+                for c_name, c_title, f_ton, g_num in fetched_records:
+                    save_collection_price(cur, c_name, c_title, f_ton, gift_number=g_num)
+                conn.commit()
+            finally:
+                conn.close()
+
+            refresh_gifts_cache(force=True)
+            confirmed_nums = sum(1 for r in _GIFTS_CACHE["rows"] if r.get("gift_number") is not None and int(r["gift_number"]) > 0)
+            _SYNC_STATUS["last_sync_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            _SYNC_STATUS["last_synced_count"] = len(fetched_records)
+            _SYNC_STATUS["last_numbers_count"] = max(numbers_found, confirmed_nums)
+            _SYNC_STATUS["last_error"] = None
+            return len(fetched_records)
+        except Exception as e:
+            _SYNC_STATUS["last_error"] = str(e)
+            raise
+
+
+async def mrkt_sync_loop():
+    while True:
+        try:
+            n = await sync_prices_from_mrkt()
+            print(f"Synced {n} MRKT collections.")
+        except Exception as e:
+            print(f"MRKT sync error: {e}")
+        await asyncio.sleep(SYNC_EVERY)
+
+
+async def sync_mrkt_via_secondary_account() -> None:
+    if not (API_ID_ENV.isdigit() and API_HASH_ENV and TG_SESSION_STRING):
+        return
+    try:
+        async with TelegramClient(StringSession(TG_SESSION_STRING), int(API_ID_ENV), API_HASH_ENV) as tg_client:
+            try:
+                peer = await tg_client.get_input_entity(MRKT_BOT_USERNAME)
+                msgs = await tg_client.get_messages(peer, limit=15)
+                collected_feed = []
+                for m in msgs:
+                    text = (getattr(m, "message", "") or "").strip()
+                    for u in re.findall(r"https?://\S+", text):
+                        collected_feed.append(("message_url", text[:160], u.rstrip(").,]")))
+                    if getattr(m, "buttons", None):
+                        for row in m.buttons:
+                            for btn in row:
+                                btn_url = (getattr(btn, "url", "") or "").strip()
+                                if btn_url:
+                                    collected_feed.append(("button_url", (getattr(btn, "text", "") or "").strip(), btn_url))
+                    for nft_match in re.finditer(r"https?://t\.me/nft/([A-Za-z0-9_]+)-(\d+)", text):
+                        slug_part, num_part = nft_match.group(1), nft_match.group(2)
+                        upsert_gift_in_db(title=prettify_slug_title(slug_part), slug=slug_part, num_val=int(num_part), url_val=nft_match.group(0))
+
+                if collected_feed:
+                    conn = get_db_conn(row_factory=False)
+                    try:
+                        cur = conn.cursor()
+                        cur.execute("DELETE FROM mrkt_feed")
+                        for stype, content, url in collected_feed:
+                            cur.execute("INSERT INTO mrkt_feed (source_type, content, url) VALUES (?, ?, ?)", (stype, content, url))
+                        conn.commit()
+                    finally:
+                        conn.close()
+            finally:
+                try:
+                    await tg_client.disconnect()
+                except Exception:
+                    pass
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        print(f"Secondary account sync error: {e}")
+
+
+async def secondary_sync_loop():
+    while True:
+        try:
+            await sync_mrkt_via_secondary_account()
+            await asyncio.sleep(max(SYNC_EVERY, 60))
+        except asyncio.CancelledError:
+            break
+
+
+# --- API Endpoints ---
+async def api_health(request: web.Request) -> web.Response:
+    return web.json_response({"status": "ok", "service": "Giftpulse MRKT API"})
+
+
+async def api_get_gifts(request: web.Request) -> web.Response:
+    max_ton_param = request.query.get("max_ton")
+    if max_ton_param is not None:
+        try:
+            rows = get_gifts_within_budget(float(max_ton_param), limit=50)
+        except ValueError:
+            return web.json_response({"error": "Invalid max_ton"}, status=400)
+    else:
+        rows = get_all_gifts_rows()
+
+    for r in rows:
+        r["link"] = build_nft_link(
+            title=r.get("title", ""),
+            gift_number=r.get("gift_number"),
+            explicit_url=r.get("custom_url"),
+            slug=r.get("slug"),
+        )
+    return web.json_response({"count": len(rows), "gifts": rows})
+
+
+async def api_upsert_gifts(request: web.Request) -> web.Response:
+    try:
+        payload = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+
+    items = payload.get("gifts") if isinstance(payload, dict) and "gifts" in payload else [payload]
+    if not isinstance(items, list) or not items:
+        return web.json_response({"error": "Provide a gift object or a 'gifts' list"}, status=400)
+
+    saved = 0
+    for item in items:
+        if not isinstance(item, dict) or not item.get("title"):
+            continue
+        upsert_gift_in_db(
+            title=str(item["title"]).strip(),
+            slug=item.get("slug"),
+            ton_val=item.get("ton"),
+            stars_val=item.get("stars"),
+            floor_val=item.get("floor_price"),
+            quick_val=item.get("quick_price"),
+            num_val=item.get("gift_number"),
+            model_val=item.get("model"),
+            backdrop_val=item.get("backdrop"),
+            symbol_val=item.get("symbol"),
+            url_val=item.get("custom_url") or item.get("url"),
+        )
+        saved += 1
+    return web.json_response({"status": "saved", "count": saved})
+
+
+async def api_trigger_sync(request: web.Request) -> web.Response:
+    try:
+        n = await sync_prices_from_mrkt()
+        await sync_mrkt_via_secondary_account()
+        return web.json_response({"status": "synced", "collections": n, "sync_status": _SYNC_STATUS})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def start_api_server():
+    app = web.Application()
+    app.router.add_get("/api/health", api_health)
+    app.router.add_get("/api/gifts", api_get_gifts)
+    app.router.add_post("/api/gifts", api_upsert_gifts)
+    app.router.add_post("/api/sync", api_trigger_sync)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", API_PORT)
+    await site.start()
+
+
+def get_active_model() -> str:
+    global _CACHED_MODEL
+    if _CACHED_MODEL:
+        return _CACHED_MODEL
+    if GROQ_MODEL and GROQ_MODEL.strip():
+        _CACHED_MODEL = GROQ_MODEL.strip()
+        return _CACHED_MODEL
+    model_ids = [m.id for m in client.models.list().data]
+    for preferred in ("qwen/qwen3.8-27b", "allam-2-7b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"):
+        if preferred in model_ids:
+            _CACHED_MODEL = preferred
+            return _CACHED_MODEL
+    chat_candidates = [mid for mid in model_ids if not any(bad in mid.lower() for bad in ("whisper", "orpheus", "guard"))]
+    if chat_candidates:
+        _CACHED_MODEL = chat_candidates[0]
+        return _CACHED_MODEL
+    raise RuntimeError(f"No suitable chat model found in: {model_ids}")
+
+
+def extract_nft_query(text: str):
+    url_match = re.search(r"(https?://t\.me/nft/[^\s]+)", text, re.IGNORECASE)
+    if url_match:
+        return url_match.group(1)
+    num_match = re.search(r"#\s*(\d{1,9})\b", text)
+    if not num_match:
+        return None
+    gift_num = num_match.group(1)
+    for ar_name, slug in AR_TO_SLUG.items():
+        if ar_name in text:
+            return f"https://t.me/nft/{slug}-{gift_num}"
+    eng_match = re.search(r"([A-Za-z][A-Za-z\s\-]{1,40}?)\s*#?\s*\d{1,9}\b", text)
+    if eng_match:
+        slug = normalize_slug(eng_match.group(1))
+        if slug:
+            return f"https://t.me/nft/{slug}-{gift_num}"
+    return None
+
+
+def linkify_gifts_in_reply(ai_reply: str) -> str:
+    refresh_gifts_cache(force=False)
+    candidates = _GIFTS_CACHE["candidates"]
+    token_counter = 0
+    link_tokens = {}
+
+    def _linkify_plain_segment(segment: str) -> str:
+        nonlocal token_counter
+        out = segment
+        for label, gift_url in candidates:
+            pattern = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(label) + r"(?![A-Za-z0-9_])", re.IGNORECASE)
+            match = pattern.search(out)
+            while match:
+                matched_text = match.group(0)
+                start, end = match.span()
+                token = f"__GIFT_LINK_{token_counter}__"
+                token_counter += 1
+                out = out[:start] + token + out[end:]
+                link_tokens[token] = f'<a href="{gift_url}">{matched_text}</a>'
+                match = pattern.search(out)
+        return out
+
+    parts = re.split(r"(<a\b[^>]*>.*?</a>)", ai_reply, flags=re.IGNORECASE | re.DOTALL)
+    for idx, part in enumerate(parts):
+        if not part or part.lower().startswith("<a "):
+            continue
+        parts[idx] = _linkify_plain_segment(part)
+
+    result = "".join(parts)
+    for token, anchor in link_tokens.items():
+        result = result.replace(token, anchor)
+    return result
+
+
+@dp.message(lambda message: message.text and message.text.startswith("/start"))
+async def cmd_start(message: types.Message):
+    user_conversations.pop(message.from_user.id, None)
+    text = (
+        "أهلاً بك في Giftpulse — هدايا تيليجرام وسوق "
+        f'<a href="{DEFAULT_MARKET_URL}">ماركت</a>.\n'
+        f'المطور: <a href="https://t.me/{DEVELOPER_USERNAME}">{DEVELOPER_NAME}</a>'
+    )
+    await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message()
+async def handle_user_message(message: types.Message):
+    if not message.text:
+        await message.answer("أرسل نصاً عن الهدايا أو TON أو ماركت.")
+        return
+
+    user_id = message.from_user.id
+    user_text = message.text.strip()
+
+    if ADMIN_ID is not None and user_id == ADMIN_ID:
+        if user_text == "حالة_القاعدة":
+            await message.answer(get_db_status_report(), disable_web_page_preview=True)
+            return
+        # تم مسح أمر فحص_اوردر من هنا
+        if user_text == "مزامنة_الاسعار":
+            if not os.path.exists(mrkt_session_path()):
+                await message.answer("ملف الجلسة mrkt.session غير موجود.")
+                return
+            try:
+                n = await sync_prices_from_mrkt()
+                await message.answer(f"تمت مزامنة {n} كولكشن (أرقام: {_SYNC_STATUS['last_numbers_count']}).")
+            except Exception as e:
+                await message.answer(f"فشلت المزامنة: {e}")
+            return
+
+    quick_info = extract_quick_sell_query(user_text)
+    if quick_info:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="فتح سوق MRKT", url=DEFAULT_MARKET_URL)]])
+        exact_data = await fetch_exact_quick_sell_from_mrkt(quick_info)
+        caption_txt = build_quick_sell_reply(exact_data)
+        card_bytes = await render_quick_sell_card_image(exact_data)
+        if card_bytes:
+            await message.answer_photo(photo=BufferedInputFile(card_bytes, filename="quick_sell_card.png"), caption=caption_txt, parse_mode="HTML", reply_markup=kb)
+        else:
+            await message.answer(caption_txt, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+        return
+
+    nft_link = extract_nft_query(user_text)
+    if nft_link:
+        await message.answer(f'رابط الهدية: <a href="{nft_link}">فتح الهدية</a>', parse_mode="HTML", disable_web_page_preview=True)
+        return
+
+    if user_id not in user_conversations:
+        user_conversations[user_id] = [{"role": "system", "content": EXPERT_SYSTEM_PROMPT}]
+
+    db_snapshot = get_relevant_gifts_summary(user_text)
+    user_conversations[user_id].append({"role": "user", "content": f"{user_text}\n\n[بيانات قاعدة البيانات: {db_snapshot}]"})
+    if len(user_conversations[user_id]) > 5:
+        user_conversations[user_id] = [user_conversations[user_id][0]] + user_conversations[user_id][-4:]
+
+    try:
+        model_to_use = get_active_model()
+        response = await asyncio.to_thread(
+            lambda: client.chat.completions.create(
+                model=model_to_use,
+                messages=user_conversations[user_id],
+                temperature=0.25,
+                max_tokens=150,
+            )
+        )
+        ai_reply = clean_text(response.choices[0].message.content)
+        user_conversations[user_id].append({"role": "assistant", "content": ai_reply})
+
+        linked_reply = linkify_gifts_in_reply(ai_reply)
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="فتح سوق MRKT", url=DEFAULT_MARKET_URL)]])
+        try:
+            await message.answer(linked_reply, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+        except Exception:
+            await message.answer(re.sub(r"<[^>]+>", "", linked_reply), reply_markup=kb, disable_web_page_preview=True)
+    except Exception as e:
+        print(f"Groq/Bot error: {e}")
+        await message.answer("حدث خطأ تقني مؤقت، حاول مجدداً.")
+
+
+async def main():
+    init_db()
+    try:
+        _ = get_active_model()
+    except Exception as e:
+        print(f"Model pre-cache warning: {e}")
+    await start_api_server()
+
+    restore_mrkt_session_from_env()
+    if API_ID_ENV.isdigit() and API_HASH_ENV and os.path.exists(mrkt_session_path()):
+        asyncio.create_task(mrkt_sync_loop())
+    if API_ID_ENV.isdigit() and API_HASH_ENV and TG_SESSION_STRING:
+        asyncio.create_task(secondary_sync_loop())
+
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
