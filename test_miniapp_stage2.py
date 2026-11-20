@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-import re
 from urllib.parse import parse_qs, unquote, urlparse
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -74,8 +73,6 @@ async def main():
     raw_init_data, init_data_unsafe = parse_tg_web_app_data(web_url)
     print("Obtained WebView URL successfully. Launching headless browser...")
 
-    page_errors: list[str] = []
-
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
@@ -87,21 +84,11 @@ async def main():
         )
         page = await context.new_page()
 
-        def on_pageerror(err):
-            msg = f"{getattr(err, 'name', '')}: {getattr(err, 'message', str(err))}"
-            stack = getattr(err, "stack", "") or ""
-            if stack:
-                msg += f" | {stack[:300]}"
-            page_errors.append(msg)
-
-        page.on("pageerror", on_pageerror)
-
         await page.add_init_script(
             f"""() => {{
                 const rawInitData = {raw_init_data!r};
                 const unsafeData = {json.dumps(init_data_unsafe)};
                 const noop = () => {{}};
-                const listeners = {{}};
 
                 window.Telegram = window.Telegram || {{}};
                 window.Telegram.WebApp = {{
@@ -125,21 +112,9 @@ async def main():
                     ready: noop,
                     expand: noop,
                     close: noop,
-                    onEvent: (ev, cb) => {{
-                        listeners[ev] = listeners[ev] || [];
-                        listeners[ev].push(cb);
-                    }},
-                    offEvent: (ev, cb) => {{
-                        if (!listeners[ev]) return;
-                        listeners[ev] = listeners[ev].filter(x => x !== cb);
-                    }},
-                    postEvent: (ev, data) => {{
-                        if (ev === 'web_app_request_theme') {{
-                            (listeners['theme_changed'] || []).forEach(cb => cb({{ theme_params: window.Telegram.WebApp.themeParams }}));
-                        }} else if (ev === 'web_app_request_viewport') {{
-                            (listeners['viewport_changed'] || []).forEach(cb => cb({{ height: 900, width: 1280, is_state_stable: true, is_expanded: true }}));
-                        }}
-                    }},
+                    onEvent: noop,
+                    offEvent: noop,
+                    postEvent: noop,
                     BackButton: {{ isVisible: false, show: noop, hide: noop, onClick: noop, offClick: noop }},
                     MainButton: {{ text: "", isVisible: false, isActive: true, show: noop, hide: noop, onClick: noop, offClick: noop, setText: noop }},
                     HapticFeedback: {{ impactOccurred: noop, notificationOccurred: noop, selectionChanged: noop }}
@@ -149,23 +124,25 @@ async def main():
 
         try:
             await page.goto(web_url, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(7000)
+            await page.wait_for_timeout(5000)
 
-            snippet_info = await page.evaluate(
+            around_36451 = await page.evaluate(
                 """async () => {
                     try {
                         const r = await fetch('https://cdn.tgmrkt.io/js/app-shared-BZgR15pj.js');
                         const txt = await r.text();
-                        const idx = txt.indexOf('UnknownErrError');
-                        return idx >= 0 ? txt.slice(Math.max(0, idx - 120), idx + 180) : 'Not found in shared';
+                        const lines = txt.split('\\n');
+                        const line2 = lines[1] || txt;
+                        const start = Math.max(0, 36451 - 220);
+                        const end = Math.min(line2.length, 36451 + 180);
+                        return 'len=' + line2.length + ' | ' + line2.slice(start, end);
                     } catch (e) {
-                        return 'Fetch err: ' + e.message;
+                        return 'Err: ' + e.message;
                     }
                 }"""
             )
             await page.screenshot(path=OUT_SCREENSHOT, full_page=False)
-            print("Page errors:", page_errors[:5])
-            print("UnknownErrError context:", repr(snippet_info))
+            print("Around 36451:", repr(around_36451))
             print("Saved screenshot to:", OUT_SCREENSHOT)
         except Exception as e:
             print(f"Browser navigation/screenshot failed: {type(e).__name__}: {e}")
