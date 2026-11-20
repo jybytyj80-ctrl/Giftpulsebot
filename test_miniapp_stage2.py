@@ -99,7 +99,7 @@ async def main():
             details = f"{getattr(err, 'name', '')}: {getattr(err, 'message', str(err))}"
             stack = getattr(err, "stack", "") or ""
             if stack:
-                details += f" | stack: {stack[:350]}"
+                details += f" | stack: {stack[:450]}"
             page_errors.append(details)
 
         page.on("pageerror", on_pageerror)
@@ -115,10 +115,44 @@ async def main():
                 const rawInitData = {raw_init_data!r};
                 const unsafeData = {json.dumps(init_data_unsafe)};
                 const noop = () => {{}};
+                const listeners = {{}};
 
                 window.addEventListener('unhandledrejection', (event) => {{
                     console.error('UNHANDLED_REJECTION:', String(event.reason && (event.reason.stack || event.reason.message || event.reason)));
                 }});
+
+                const onEvent = (eventType, callback) => {{
+                    if (!listeners[eventType]) listeners[eventType] = [];
+                    listeners[eventType].push(callback);
+                }};
+
+                const offEvent = (eventType, callback) => {{
+                    if (!listeners[eventType]) return;
+                    listeners[eventType] = listeners[eventType].filter(cb => cb !== callback);
+                }};
+
+                const postEvent = (eventType, eventData) => {{
+                    if (eventType === 'web_app_request_theme') {{
+                        (listeners['theme_changed'] || []).forEach(cb => cb({{
+                            theme_params: {{
+                                bg_color: '#18222d',
+                                text_color: '#ffffff',
+                                hint_color: '#b1c3d5',
+                                link_color: '#6ab2f2',
+                                button_color: '#5288c1',
+                                button_text_color: '#ffffff',
+                                secondary_bg_color: '#131c26'
+                            }}
+                        }}));
+                    }} else if (eventType === 'web_app_request_viewport') {{
+                        (listeners['viewport_changed'] || []).forEach(cb => cb({{
+                            height: 900,
+                            width: 1280,
+                            is_state_stable: true,
+                            is_expanded: true
+                        }}));
+                    }}
+                }};
 
                 window.Telegram = window.Telegram || {{}};
                 window.Telegram.WebApp = {{
@@ -141,6 +175,7 @@ async def main():
                     viewportStableHeight: 900,
                     headerColor: "#18222d",
                     backgroundColor: "#18222d",
+                    isClosingConfirmationEnabled: false,
                     ready: noop,
                     expand: noop,
                     close: noop,
@@ -148,13 +183,16 @@ async def main():
                     setBackgroundColor: noop,
                     enableClosingConfirmation: noop,
                     disableClosingConfirmation: noop,
-                    onEvent: noop,
-                    offEvent: noop,
+                    onEvent,
+                    offEvent,
+                    postEvent,
                     sendData: noop,
                     openLink: noop,
                     openTelegramLink: noop,
+                    requestWriteAccess: (cb) => cb && cb(true),
+                    requestContact: (cb) => cb && cb(false),
                     BackButton: {{ isVisible: false, show: noop, hide: noop, onClick: noop, offClick: noop }},
-                    MainButton: {{ text: "", isVisible: false, isActive: true, show: noop, hide: noop, onClick: noop, offClick: noop, setText: noop }},
+                    MainButton: {{ text: "", isVisible: false, isActive: true, show: noop, hide: noop, onClick: noop, offClick: noop, setText: noop, setParams: noop }},
                     HapticFeedback: {{ impactOccurred: noop, notificationOccurred: noop, selectionChanged: noop }}
                 }};
             }}"""
@@ -185,12 +223,16 @@ async def main():
             current_url = page.url
             stats = await page.evaluate(
                 """() => {
-                    const text = (document.body && (document.body.innerText || document.body.textContent) || '').trim();
+                    const clone = document.body ? document.body.cloneNode(true) : null;
+                    if (clone) {
+                        clone.querySelectorAll('style, script').forEach(el => el.remove());
+                    }
+                    const cleanText = (clone && (clone.innerText || clone.textContent) || '').replace(/\\s+/g, ' ').trim();
                     const htmlLen = document.documentElement ? document.documentElement.outerHTML.length : 0;
                     const elementsCount = document.querySelectorAll('*').length;
                     return {
-                        textPreview: text.slice(0, 300),
-                        textLen: text.length,
+                        cleanTextPreview: cleanText.slice(0, 250),
+                        cleanTextLen: cleanText.length,
                         htmlLen,
                         elementsCount
                     };
