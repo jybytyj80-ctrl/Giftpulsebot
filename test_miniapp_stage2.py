@@ -75,7 +75,7 @@ async def main():
 
     console_errors: list[str] = []
     page_errors: list[str] = []
-    failed_requests: list[str] = []
+    bad_responses: list[str] = []
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
@@ -104,10 +104,10 @@ async def main():
 
         page.on("pageerror", on_pageerror)
         page.on(
-            "requestfailed",
-            lambda req: failed_requests.append(
-                f"{req.method} {req.url} -> {req.failure or 'failed'}"
-            ),
+            "response",
+            lambda res: bad_responses.append(f"{res.status} {res.url}")
+            if res.status >= 400
+            else None,
         )
 
         await page.add_init_script(
@@ -154,11 +154,21 @@ async def main():
                     }}
                 }};
 
+                window.TelegramWebviewProxy = {{
+                    postEvent: (eventType, eventData) => postEvent(eventType, eventData)
+                }};
+                window.TelegramWebview = {{
+                    postEvent: (eventType, eventData) => postEvent(eventType, eventData),
+                    receiveEvent: (eventType, eventData) => {{
+                        (listeners[eventType] || []).forEach(cb => cb(eventData));
+                    }}
+                }};
+
                 window.Telegram = window.Telegram || {{}};
                 window.Telegram.WebApp = {{
                     initData: rawInitData,
                     initDataUnsafe: unsafeData,
-                    version: "7.10",
+                    version: "9.0",
                     platform: "android",
                     colorScheme: "dark",
                     themeParams: {{
@@ -244,7 +254,7 @@ async def main():
             print("Stats:", stats)
             print("Console errors/warnings:", console_errors[:10])
             print("Page errors:", page_errors[:10])
-            print("Failed requests:", failed_requests[:10])
+            print("Bad responses (>=400):", bad_responses[:10])
             print("Saved screenshot to:", OUT_SCREENSHOT)
         except Exception as e:
             print(f"Browser navigation/screenshot failed: {type(e).__name__}: {e}")
