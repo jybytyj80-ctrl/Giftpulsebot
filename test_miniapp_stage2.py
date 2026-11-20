@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from urllib.parse import parse_qs, unquote, urlparse
 from telethon import TelegramClient
@@ -14,12 +15,27 @@ TEST_NFT_URL = os.getenv("TEST_NFT_URL", "https://t.me/nft/FlyingBroom-3349").st
 OUT_SCREENSHOT = os.getenv("OUT_SCREENSHOT", "stage2_view.png").strip()
 
 
-def extract_init_data(web_url: str) -> str:
+def parse_tg_web_app_data(web_url: str) -> tuple[str, dict]:
     parsed = urlparse(web_url)
-    fragment = parsed.fragment or ""
-    params = parse_qs(fragment)
-    raw_tg_data = params.get("tgWebAppData", [""])[0]
-    return unquote(raw_tg_data)
+    params = parse_qs(parsed.fragment or "")
+    raw_init_data = unquote(params.get("tgWebAppData", [""])[0])
+    unsafe: dict = {"start_param": TEST_NFT_URL.split("/")[-1]}
+
+    if raw_init_data:
+        inner = parse_qs(raw_init_data, keep_blank_values=True)
+        for k, vals in inner.items():
+            if not vals:
+                continue
+            v = vals[0]
+            if k == "user":
+                try:
+                    unsafe["user"] = json.loads(v)
+                except Exception:
+                    unsafe["user"] = v
+            else:
+                unsafe[k] = v
+
+    return raw_init_data, unsafe
 
 
 async def get_webview_url() -> str | None:
@@ -54,7 +70,7 @@ async def main():
         print("ERROR: Failed to obtain WebView URL")
         return
 
-    init_data = extract_init_data(web_url)
+    raw_init_data, init_data_unsafe = parse_tg_web_app_data(web_url)
     print("Obtained WebView URL successfully. Launching headless browser...")
 
     console_errors: list[str] = []
@@ -75,10 +91,18 @@ async def main():
         page.on(
             "console",
             lambda msg: console_errors.append(f"[{msg.type}] {msg.text}")
-            if msg.type == "error"
+            if msg.type in ("error", "warning")
             else None,
         )
-        page.on("pageerror", lambda err: page_errors.append(str(err)))
+
+        def on_pageerror(err):
+            details = f"{getattr(err, 'name', '')}: {getattr(err, 'message', str(err))}"
+            stack = getattr(err, "stack", "") or ""
+            if stack:
+                details += f" | stack: {stack[:350]}"
+            page_errors.append(details)
+
+        page.on("pageerror", on_pageerror)
         page.on(
             "requestfailed",
             lambda req: failed_requests.append(
@@ -88,14 +112,18 @@ async def main():
 
         await page.add_init_script(
             f"""() => {{
-                const rawInitData = {init_data!r};
+                const rawInitData = {raw_init_data!r};
+                const unsafeData = {json.dumps(init_data_unsafe)};
                 const noop = () => {{}};
+
+                window.addEventListener('unhandledrejection', (event) => {{
+                    console.error('UNHANDLED_REJECTION:', String(event.reason && (event.reason.stack || event.reason.message || event.reason)));
+                }});
+
                 window.Telegram = window.Telegram || {{}};
                 window.Telegram.WebApp = {{
                     initData: rawInitData,
-                    initDataUnsafe: {{
-                        start_param: {TEST_NFT_URL.split("/")[-1]!r}
-                    }},
+                    initDataUnsafe: unsafeData,
                     version: "7.10",
                     platform: "android",
                     colorScheme: "dark",
@@ -111,14 +139,20 @@ async def main():
                     isExpanded: true,
                     viewportHeight: 900,
                     viewportStableHeight: 900,
+                    headerColor: "#18222d",
+                    backgroundColor: "#18222d",
                     ready: noop,
                     expand: noop,
                     close: noop,
+                    setHeaderColor: noop,
+                    setBackgroundColor: noop,
                     enableClosingConfirmation: noop,
                     disableClosingConfirmation: noop,
                     onEvent: noop,
                     offEvent: noop,
                     sendData: noop,
+                    openLink: noop,
+                    openTelegramLink: noop,
                     BackButton: {{ isVisible: false, show: noop, hide: noop, onClick: noop, offClick: noop }},
                     MainButton: {{ text: "", isVisible: false, isActive: true, show: noop, hide: noop, onClick: noop, offClick: noop, setText: noop }},
                     HapticFeedback: {{ impactOccurred: noop, notificationOccurred: noop, selectionChanged: noop }}
@@ -133,7 +167,6 @@ async def main():
             except Exception:
                 pass
 
-            # انتظر حتى يختفي preloader أو يظهر محتوى نصي حقيقي (بحد أقصى 12 ثانية)
             for _ in range(12):
                 await page.wait_for_timeout(1000)
                 ready_state = await page.evaluate(
@@ -156,7 +189,7 @@ async def main():
                     const htmlLen = document.documentElement ? document.documentElement.outerHTML.length : 0;
                     const elementsCount = document.querySelectorAll('*').length;
                     return {
-                        textPreview: text.slice(0, 400),
+                        textPreview: text.slice(0, 300),
                         textLen: text.length,
                         htmlLen,
                         elementsCount
@@ -167,8 +200,7 @@ async def main():
             print("Final URL:", current_url)
             print("Page title:", repr(title))
             print("Stats:", stats)
-            print("Body text preview:", repr(stats["textPreview"]))
-            print("Console errors:", console_errors[:10])
+            print("Console errors/warnings:", console_errors[:10])
             print("Page errors:", page_errors[:10])
             print("Failed requests:", failed_requests[:10])
             print("Saved screenshot to:", OUT_SCREENSHOT)
