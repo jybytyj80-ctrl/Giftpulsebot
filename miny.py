@@ -1870,13 +1870,11 @@ async def cmd_start(message: types.Message):
     lang = user_langs.get(message.from_user.id, "ar")
     
     text = (
-        "أهلاً بك في Giftpulse — هدايا تيليجرام وسوق "
-        f'<a href="{DEFAULT_MARKET_URL}">ماركت</a>.\n'
+        "اهلاً بك في بوت Giftpulse خبير متخصص في الهدايا\n"
         f'المطور: <a href="https://t.me/{DEVELOPER_USERNAME}">{DEVELOPER_NAME}</a>\n\n'
-        "اختر لغتك المفضلة من الأسفل:"
+        "يرجى اختيار لغتك المفضلة أدناه:"
     ) if lang == "ar" else (
-        "Welcome to Giftpulse — Telegram Gifts and the "
-        f'<a href="{DEFAULT_MARKET_URL}">MRKT</a>.\n'
+        "Welcome to Giftpulse bot, an expert specialized in gifts\n"
         f'Developer: <a href="https://t.me/{DEVELOPER_USERNAME}">{DEVELOPER_NAME}</a>\n\n'
         "Please choose your preferred language below:"
     )
@@ -1889,16 +1887,17 @@ async def change_lang_callback(callback_query: types.CallbackQuery):
     lang_code = callback_query.data.split("_")[1]
     user_langs[callback_query.from_user.id] = lang_code
     
+    # إظهار التغيير على شكل إشعار (Toast Alert) فوق الشاشة
     if lang_code == "ar":
-        text = "تم تغيير اللغة إلى العربية بنجاح ✅"
+        alert_text = "تم تغيير اللغة إلى العربية بنجاح ✅"
     else:
-        text = "Language changed to English successfully ✅"
+        alert_text = "Language changed to English successfully ✅"
         
-    await callback_query.answer(text)
+    # إرسال الإشعار
+    await callback_query.answer(alert_text, show_alert=True)
     
-    # تحديث الرسالة لإزالة الأزرار بعد الاختيار
+    # إزالة الأزرار من الرسالة الأصلية (اختياري، لعدم تكرار الضغط)
     await callback_query.message.edit_reply_markup(reply_markup=None)
-    await callback_query.message.answer(text)
 
 
 @dp.message()
@@ -1929,12 +1928,6 @@ async def handle_user_message(message: types.Message):
 
     quick_info = extract_quick_sell_query(user_text)
     if quick_info:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="فتح سوق MRKT" if lang == "ar" else "Open MRKT", url=DEFAULT_MARKET_URL)],
-            [InlineKeyboardButton(text="تغيير اللغة 🌐" if lang == "ar" else "Change Language 🌐", callback_data="toggle_lang")]
-        ])
-        
-        # للحصول على الأزرار الصحيحة في التبديل
         if lang == "ar":
             kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="فتح سوق MRKT", url=DEFAULT_MARKET_URL)],
