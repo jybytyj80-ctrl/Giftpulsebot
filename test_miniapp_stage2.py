@@ -126,10 +126,10 @@ async def main():
                     }}, 0);
                 }};
 
-                window.TelegramWebviewProxy = {{ postEvent: postFn }};
-                window.TelegramGameProxy = {{ receiveEvent: noop }};
+                window.TelegramWebviewProxy = {{ postEvent: postFn, unwrap: () => window }};
+                window.TelegramGameProxy = {{ receiveEvent: noop, unwrap: () => window }};
                 window.Telegram = window.Telegram || {{}};
-                window.Telegram.WebView = {{ postEvent: postFn, receiveEvent: noop }};
+                window.Telegram.WebView = {{ postEvent: postFn, receiveEvent: noop, unwrap: () => window }};
                 window.Telegram.WebApp = {{
                     initData: rawInitData,
                     initDataUnsafe: unsafeData,
@@ -146,6 +146,7 @@ async def main():
                     onEvent: noop,
                     offEvent: noop,
                     postEvent: postFn,
+                    unwrap: () => window,
                     BackButton: {{ isVisible: false, show: noop, hide: noop, onClick: noop, offClick: noop }},
                     MainButton: {{ text: "", isVisible: false, isActive: true, show: noop, hide: noop, onClick: noop, offClick: noop, setText: noop }},
                     HapticFeedback: {{ impactOccurred: noop, notificationOccurred: noop, selectionChanged: noop }}
@@ -161,8 +162,8 @@ async def main():
                 """async () => {
                     const r = await fetch('https://cdn.tgmrkt.io/js/app-shared-BZgR15pj.js');
                     const txt = await r.text();
-                    const idx = txt.indexOf('function Vn(');
-                    const before = idx >= 0 ? txt.slice(Math.max(0, idx - 320), idx) : '';
+                    const uIdx = txt.indexOf('"unwrap"');
+                    const unwrapCtx = uIdx >= 0 ? txt.slice(Math.max(0, uIdx - 180), uIdx + 220) : 'no unwrap';
                     const clone = document.body ? document.body.cloneNode(true) : null;
                     if (clone) clone.querySelectorAll('style, script').forEach(el => el.remove());
                     const text = (clone && (clone.innerText || clone.textContent) || '').replace(/\\s+/g, ' ').trim();
@@ -170,7 +171,7 @@ async def main():
                         posted: (window.__posted || []).slice(0, 15),
                         textPreview: text.slice(0, 180),
                         elements: document.querySelectorAll('*').length,
-                        beforeShort: before.slice(-220)
+                        unwrapCtx
                     };
                 }"""
             )
@@ -178,7 +179,7 @@ async def main():
             log(f"Page errors: {page_errors[:3]}")
             log(f"Posted: {info['posted']} | Elements: {info['elements']}")
             log(f"Text: {info['textPreview']!r}")
-            log(f"Before Vn: {info['beforeShort']}")
+            log(f"Unwrap ctx: {info['unwrapCtx']}")
             log(f"Saved screenshot to: {OUT_SCREENSHOT}")
         except Exception as e:
             log(f"Browser navigation/screenshot failed: {type(e).__name__}: {e}")
