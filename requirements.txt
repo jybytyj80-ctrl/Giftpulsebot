@@ -3,4 +3,3 @@ groq
 telethon
 amrkt
 pillow
-playwright
