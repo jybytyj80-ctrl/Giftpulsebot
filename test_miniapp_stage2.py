@@ -48,7 +48,10 @@ async def main():
     print("Obtained WebView URL successfully. Launching headless browser...")
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage"],
+        )
         context = await browser.new_context(
             viewport={"width": 1280, "height": 900},
             user_agent="Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
@@ -56,12 +59,32 @@ async def main():
         page = await context.new_page()
         try:
             await page.goto(web_url, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(6000)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            await page.wait_for_timeout(8000)
+
             title = await page.title()
-            body_preview = await page.evaluate("() => (document.body && document.body.innerText || '').trim().slice(0, 300)")
+            current_url = page.url
+            stats = await page.evaluate(
+                """() => {
+                    const text = (document.body && (document.body.innerText || document.body.textContent) || '').trim();
+                    const htmlLen = document.documentElement ? document.documentElement.outerHTML.length : 0;
+                    const elementsCount = document.querySelectorAll('*').length;
+                    return {
+                        textPreview: text.slice(0, 400),
+                        textLen: text.length,
+                        htmlLen,
+                        elementsCount
+                    };
+                }"""
+            )
             await page.screenshot(path=OUT_SCREENSHOT, full_page=False)
+            print("Final URL:", current_url)
             print("Page title:", repr(title))
-            print("Body text preview:", repr(body_preview))
+            print("Stats:", stats)
+            print("Body text preview:", repr(stats["textPreview"]))
             print("Saved screenshot to:", OUT_SCREENSHOT)
         except Exception as e:
             print(f"Browser navigation/screenshot failed: {type(e).__name__}: {e}")
