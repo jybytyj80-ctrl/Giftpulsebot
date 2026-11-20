@@ -65,18 +65,18 @@ async def main():
             await page.goto(web_url, wait_until="domcontentloaded", timeout=30000)
             await page.wait_for_timeout(5000)
 
-            tn_code = await page.evaluate(
+            code_chunk = await page.evaluate(
                 """async () => {
                     const r = await fetch('https://cdn.tgmrkt.io/js/app-shared-BZgR15pj.js');
                     const txt = await r.text();
-                    const idx = txt.indexOf('function Tn(');
-                    if (idx === -1) return 'function Tn( not found';
-                    return txt.slice(idx, idx + 1100);
+                    const idx = txt.indexOf('function Vn(');
+                    if (idx === -1) return 'function Vn( not found';
+                    return txt.slice(idx + 550, idx + 2350);
                 }"""
             )
             await page.screenshot(path=OUT_SCREENSHOT, full_page=False)
             print("Page errors:", page_errors[:5])
-            print("TN_CODE:", tn_code)
+            print("VN_TN_PART2:", code_chunk)
             print("Saved screenshot to:", OUT_SCREENSHOT)
         except Exception as e:
             print(f"Browser navigation/screenshot failed: {type(e).__name__}: {e}")
