@@ -1,7 +1,5 @@
 import asyncio
-import json
 import os
-from urllib.parse import parse_qs, unquote, urlparse
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import RequestWebViewRequest
@@ -17,26 +15,6 @@ OUT_SCREENSHOT = os.getenv("OUT_SCREENSHOT", "stage2_view.png").strip()
 
 def log(msg: str) -> None:
     print(msg, flush=True)
-
-
-def parse_tg_web_app_data(web_url: str) -> tuple[str, dict]:
-    parsed = urlparse(web_url)
-    params = parse_qs(parsed.fragment or "")
-    raw_init_data = unquote(params.get("tgWebAppData", [""])[0])
-    unsafe: dict = {"start_param": TEST_NFT_URL.split("/")[-1]}
-    if raw_init_data:
-        for k, vals in parse_qs(raw_init_data, keep_blank_values=True).items():
-            if not vals:
-                continue
-            v = vals[0]
-            if k == "user":
-                try:
-                    unsafe["user"] = json.loads(v)
-                except Exception:
-                    unsafe["user"] = v
-            else:
-                unsafe[k] = v
-    return raw_init_data, unsafe
 
 
 async def get_webview_url() -> str | None:
@@ -71,9 +49,7 @@ async def main():
         log("ERROR: Failed to obtain WebView URL")
         return
 
-    raw_init_data, init_data_unsafe = parse_tg_web_app_data(web_url)
     log("Obtained WebView URL successfully. Launching headless browser...")
-
     page_errors: list[str] = []
 
     async with async_playwright() as p:
@@ -81,133 +57,25 @@ async def main():
             headless=True,
             args=["--no-sandbox", "--disable-dev-shm-usage"],
         )
-        context = await browser.new_context(
-            viewport={"width": 1280, "height": 900},
-            user_agent="Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-        )
-        page = await context.new_page()
+        page = await browser.new_page()
         page.on("pageerror", lambda err: page_errors.append(str(err)))
-
-        await page.add_init_script(
-            f"""() => {{
-                const rawInitData = {raw_init_data!r};
-                const unsafeData = {json.dumps(init_data_unsafe)};
-                const noop = () => {{}};
-                window.__posted = [];
-
-                const dispatchHostEvent = (eventType, eventData) => {{
-                    const raw = JSON.stringify({{ eventType, eventData }});
-                    window.dispatchEvent(new MessageEvent('message', {{ data: raw }}));
-                    if (window.TelegramGameProxy_receiveEvent) {{
-                        window.TelegramGameProxy_receiveEvent(eventType, eventData);
-                    }}
-                    if (window.Telegram && window.Telegram.WebView && typeof window.Telegram.WebView.receiveEvent === 'function') {{
-                        window.Telegram.WebView.receiveEvent(eventType, eventData);
-                    }}
-                }};
-
-                const postFn = (eventType, data) => {{
-                    window.__posted.push(String(eventType));
-                    let parsed = {{}};
-                    try {{ parsed = typeof data === 'string' ? JSON.parse(data) : (data || {{}}); }} catch (_) {{}}
-                    const reqId = parsed && parsed.req_id;
-                    setTimeout(() => {{
-                        if (reqId !== undefined) dispatchHostEvent('custom_method_invoked', {{ req_id: reqId, result: {{}} }});
-                        dispatchHostEvent('finalized', {{ req_id: reqId }});
-                        if (eventType === 'web_app_request_theme') {{
-                            dispatchHostEvent('theme_changed', {{
-                                theme_params: {{
-                                    bg_color: '#18222d',
-                                    text_color: '#ffffff',
-                                    hint_color: '#b1c3d5',
-                                    link_color: '#6ab2f2',
-                                    button_color: '#5288c1',
-                                    button_text_color: '#ffffff',
-                                    secondary_bg_color: '#131c26'
-                                }}
-                            }});
-                        }} else if (eventType === 'web_app_request_viewport') {{
-                            dispatchHostEvent('viewport_changed', {{
-                                height: 900,
-                                width: 1280,
-                                is_state_stable: true,
-                                is_expanded: true
-                            }});
-                        }} else if (eventType === 'web_app_request_safe_area') {{
-                            dispatchHostEvent('safe_area_changed', {{ top: 0, bottom: 0, left: 0, right: 0 }});
-                        }} else if (eventType === 'web_app_request_content_safe_area') {{
-                            dispatchHostEvent('content_safe_area_changed', {{ top: 0, bottom: 0, left: 0, right: 0 }});
-                        }}
-                    }}, 0);
-                }};
-
-                const recvFn = noop;
-                recvFn.unwrap = () => recvFn;
-
-                const gameProxy = {{ receiveEvent: recvFn, postEvent: postFn }};
-                gameProxy.unwrap = () => gameProxy;
-
-                const webViewObj = {{ postEvent: postFn, receiveEvent: recvFn }};
-                webViewObj.unwrap = () => webViewObj;
-
-                window.TelegramWebviewProxy = {{ postEvent: postFn }};
-                window.TelegramGameProxy = gameProxy;
-                window.Telegram = window.Telegram || {{}};
-                window.Telegram.WebView = webViewObj;
-                window.Telegram.WebApp = {{
-                    initData: rawInitData,
-                    initDataUnsafe: unsafeData,
-                    version: "8.0",
-                    platform: "android",
-                    colorScheme: "dark",
-                    themeParams: {{
-                        bg_color: "#18222d",
-                        text_color: "#ffffff",
-                        hint_color: "#b1c3d5",
-                        link_color: "#6ab2f2",
-                        button_color: "#5288c1",
-                        button_text_color: "#ffffff",
-                        secondary_bg_color: "#131c26"
-                    }},
-                    isExpanded: true,
-                    viewportHeight: 900,
-                    viewportStableHeight: 900,
-                    ready: noop,
-                    expand: noop,
-                    close: noop,
-                    onEvent: noop,
-                    offEvent: noop,
-                    postEvent: postFn,
-                    BackButton: {{ isVisible: false, show: noop, hide: noop, onClick: noop, offClick: noop }},
-                    MainButton: {{ text: "", isVisible: false, isActive: true, show: noop, hide: noop, onClick: noop, offClick: noop, setText: noop }},
-                    HapticFeedback: {{ impactOccurred: noop, notificationOccurred: noop, selectionChanged: noop }}
-                }};
-            }}"""
-        )
 
         try:
             await page.goto(web_url, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(7000)
+            await page.wait_for_timeout(5000)
 
-            info = await page.evaluate(
-                """() => {
-                    const pre = document.querySelector('#preloader');
-                    const preHidden = !pre || pre.classList.contains('preloader-hidden') || getComputedStyle(pre).display === 'none';
-                    const clone = document.body ? document.body.cloneNode(true) : null;
-                    if (clone) clone.querySelectorAll('style, script').forEach(el => el.remove());
-                    const text = (clone && (clone.innerText || clone.textContent) || '').replace(/\\s+/g, ' ').trim();
-                    return {
-                        posted: (window.__posted || []).slice(0, 15),
-                        preHidden,
-                        textPreview: text.slice(0, 200),
-                        elements: document.querySelectorAll('*').length
-                    };
+            vn_tail = await page.evaluate(
+                """async () => {
+                    const r = await fetch('https://cdn.tgmrkt.io/js/app-shared-BZgR15pj.js');
+                    const txt = await r.text();
+                    const idx = txt.indexOf('function Vn(');
+                    if (idx === -1) return 'function Vn( not found';
+                    return txt.slice(idx + 220, idx + 700);
                 }"""
             )
             await page.screenshot(path=OUT_SCREENSHOT, full_page=False)
             log(f"Page errors: {page_errors[:3]}")
-            log(f"Posted: {info['posted']} | Elements: {info['elements']} | PreHidden: {info['preHidden']}")
-            log(f"Text: {info['textPreview']!r}")
+            log(f"VN_TAIL: {vn_tail}")
             log(f"Saved screenshot to: {OUT_SCREENSHOT}")
         except Exception as e:
             log(f"Browser navigation/screenshot failed: {type(e).__name__}: {e}")
