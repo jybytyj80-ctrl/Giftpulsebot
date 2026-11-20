@@ -30,13 +30,6 @@ try:
 except Exception:
     PIL_AVAILABLE = False
 
-try:
-    import arabic_reshaper
-    from bidi.algorithm import get_display
-    ARABIC_SHAPING_AVAILABLE = True
-except Exception:
-    ARABIC_SHAPING_AVAILABLE = False
-
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL")
@@ -57,7 +50,7 @@ FETCH_GIFT_NUMBERS = os.getenv("FETCH_GIFT_NUMBERS", "1").strip().lower() in ("1
 TON_USD_RATE = float(os.getenv("TON_USD_RATE", "1.027"))
 
 DEVELOPER_USERNAME = "vvopnm8"
-DEVELOPER_NAME = "عباس"
+DEVELOPER_NAME = "Abbas"
 DEFAULT_MARKET_URL = "https://t.me/mrkt/app"
 
 if not TELEGRAM_BOT_TOKEN or not GROQ_API_KEY:
@@ -145,30 +138,30 @@ AR_TO_SLUG = {
 }
 
 INITIAL_GIFTS = [
-    ("آيس كريم مخروطي", "IceCreamCone", 1.2, 300, 1.2, 1.1, None, None, None, None, None),
-    ("نودلز", "InstantRamen", 1.8, 438, 1.8, 1.7, None, None, None, None, None),
-    ("آيس كريم شوكولاتة", "ChocolateIceCream", 2.0, 449, 2.0, 1.9, None, None, None, None, None),
-    ("شعلة", "Torch", 2.5, 460, 2.5, 2.4, None, None, None, None, None),
+    ("IceCreamCone", "IceCreamCone", 1.2, 300, 1.2, 1.1, None, None, None, None, None),
+    ("InstantRamen", "InstantRamen", 1.8, 438, 1.8, 1.7, None, None, None, None, None),
+    ("ChocolateIceCream", "ChocolateIceCream", 2.0, 449, 2.0, 1.9, None, None, None, None, None),
+    ("Torch", "Torch", 2.5, 460, 2.5, 2.4, None, None, None, None, None),
     ("Liberty Figure", "LibertyFigure", 13.24, 480, 13.24, None, None, None, None, None, None),
-    ("كلب الهيب هوب", "HipHopDog", 4.0, 480, 4.0, 3.8, None, None, None, None, None),
-    ("فانوس", "GenieLamp", 4.5, 480, 4.5, 4.3, None, None, None, None, None),
-    ("مصاصة ملونة", "LolPop", 5.0, 480, 5.0, 4.8, None, None, None, None, None),
-    ("عوامة فلامنجو", "FlamingoFloat", 6.5, 480, 6.5, 6.2, None, None, None, None, None),
-    ("حقيبة تيليجرام", "TelegramBag", 8.0, 480, 8.0, 7.6, None, None, None, None, None),
-    ("قناع", "Mask", 13.8, 843, 13.81, 13.30, None, None, None, None, None),
+    ("HipHopDog", "HipHopDog", 4.0, 480, 4.0, 3.8, None, None, None, None, None),
+    ("GenieLamp", "GenieLamp", 4.5, 480, 4.5, 4.3, None, None, None, None, None),
+    ("LolPop", "LolPop", 5.0, 480, 5.0, 4.8, None, None, None, None, None),
+    ("FlamingoFloat", "FlamingoFloat", 6.5, 480, 6.5, 6.2, None, None, None, None, None),
+    ("TelegramBag", "TelegramBag", 8.0, 480, 8.0, 7.6, None, None, None, None, None),
+    ("Mask", "Mask", 13.8, 843, 13.81, 13.30, None, None, None, None, None),
 ]
 
 EXPERT_SYSTEM_PROMPT = """
 You are "Giftpulse", a warm, lively, and sharp advisor on Telegram Gifts, Telegram Stars, collectible attributes (Model, Backdrop, Symbol), and trading in the MRKT marketplace.
 
 STRICT RULES:
-1. Keep replies VERY SHORT (1 or 2 concise lines MAXIMUM, never more). Speak with warmth, natural energy, and human touch—never dry or robotic—while keeping every word tight and free of fluff. When presenting gift results, start with: هذا أفضل النتائج التي وجدتها على <a href="https://t.me/mrkt/app">ماركت</a>: followed by items formatted as Gift Name #Number — Price TON (or Gift Name — Price TON if no number is given), including exact price/floor/quick/model/number details from the database entries when relevant.
+1. Keep replies VERY SHORT (1 or 2 concise lines MAXIMUM, never more). Speak with warmth, natural energy, and human touch—never dry or robotic—while keeping every word tight and free of fluff. When presenting gift results, start with: Here are the best results I found on <a href="https://t.me/mrkt/app">Market</a>: followed by items formatted as Gift Name #Number — Price TON (or Gift Name — Price TON if no number is given), including exact price/floor/quick/model/number details from the database entries when relevant.
 2. NEVER invent NFT gift numbers (#...) if a gift number is not explicitly given in the database entry. Only mention a number if it is explicitly shown in the database entry.
-3. NEVER say "لا يمكنني عرض روابط" or "لا أستطيع إرسال روابط". Gift names in replies are automatically turned into clickable links by the bot, and there is a "فتح سوق MRKT" button below.
-4. Never use ** or markdown asterisks. Plain text only (except the exact <a href="https://t.me/mrkt/app">ماركت</a> link when presenting results).
+3. NEVER say "I cannot show links". Gift names in replies are automatically turned into clickable links by the bot, and there is an "Open MRKT" button below.
+4. Never use ** or markdown asterisks. Plain text only (except the exact <a href="https://t.me/mrkt/app">Market</a> link when presenting results).
 5. Prices in MRKT are in TON (not thousands of Stars). Floor = floor price; Quick = instant sale price (slightly below floor).
 6. Answer ONLY about Telegram Gifts, Telegram Stars, collectibles, and MRKT. Outside scope: reply in one short line:
-   مختص بالهدايا ومايدور حولها فقط
+   I only specialize in gifts and related topics.
 """
 
 user_conversations = {}
@@ -319,7 +312,7 @@ def get_gifts_within_budget(max_ton: float, limit: int = 5):
 
 def _format_gift_entry(r: dict) -> str:
     ton_val = r.get("ton")
-    ton_str = f"{float(ton_val):g} TON" if ton_val is not None else "غير محدد"
+    ton_str = f"{float(ton_val):g} TON" if ton_val is not None else "Unknown"
     name_with_num = (
         f"{r['title']} #{r['gift_number']}"
         if r.get("gift_number") is not None and int(r["gift_number"]) > 0
@@ -327,22 +320,22 @@ def _format_gift_entry(r: dict) -> str:
     )
     s = f"{name_with_num} — {ton_str}"
     if r.get("floor_price") is not None:
-        s += f" | فلور {r['floor_price']} TON"
+        s += f" | Floor {r['floor_price']} TON"
     if r.get("quick_price") is not None:
-        s += f" | كويك {r['quick_price']} TON"
+        s += f" | Quick {r['quick_price']} TON"
     if r.get("model"):
-        s += f" | موديل {r['model']}"
+        s += f" | Model {r['model']}"
     if r.get("backdrop"):
-        s += f" | خلفية {r['backdrop']}"
+        s += f" | Backdrop {r['backdrop']}"
     if r.get("symbol"):
-        s += f" | رمز {r['symbol']}"
+        s += f" | Symbol {r['symbol']}"
     return s
 
 
 def get_relevant_gifts_summary(user_text: str) -> str:
     rows = get_all_gifts_rows()
     if not rows:
-        return "لا توجد هدايا مسجلة."
+        return "No gifts registered."
 
     q_low = user_text.lower()
     matched = []
@@ -352,7 +345,7 @@ def get_relevant_gifts_summary(user_text: str) -> str:
         if (title and title.lower() in q_low) or (slug and len(slug) >= 2 and slug.lower() in q_low):
             matched.append(r)
 
-    budget_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:تون|ton)", q_low)
+    budget_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:ton)", q_low)
     if budget_match and not matched:
         budget_val = float(budget_match.group(1))
         matched = [r for r in rows if r.get("ton") is not None and float(r["ton"]) <= budget_val][:8]
@@ -367,14 +360,14 @@ def get_db_status_report() -> str:
     with_nums = sum(1 for r in rows if r.get("gift_number") is not None and int(r["gift_number"]) > 0)
     top_names = ", ".join(r.get("title", "") for r in rows[:5] if r.get("title"))
     lines = [
-        "حالة قاعدة البيانات والمزامنة:",
-        f"- إجمالي الهدايا المحفوظة: {total} (أرقام مؤكدة: {with_nums})",
-        f"- آخر مزامنة: {_SYNC_STATUS['last_sync_at'] or 'لم تتم بعد'} (كولكشنز: {_SYNC_STATUS['last_synced_count']} | أرقام: {_SYNC_STATUS['last_numbers_count']})",
-        f"- الفاصل الزمني: {SYNC_EVERY} ثانية",
-        f"- أبرز الأسماء: {top_names or 'لا يوجد'}",
+        "Database and Sync Status:",
+        f"- Total gifts saved: {total} (Confirmed numbers: {with_nums})",
+        f"- Last sync: {_SYNC_STATUS['last_sync_at'] or 'Not yet'} (Collections: {_SYNC_STATUS['last_synced_count']} | Numbers: {_SYNC_STATUS['last_numbers_count']})",
+        f"- Interval: {SYNC_EVERY} seconds",
+        f"- Top names: {top_names or 'None'}",
     ]
     if _SYNC_STATUS["last_error"]:
-        lines.append(f"- آخر خطأ: {_SYNC_STATUS['last_error']}")
+        lines.append(f"- Last error: {_SYNC_STATUS['last_error']}")
     return "\n".join(lines)
 
 
@@ -448,7 +441,7 @@ def upsert_gift_in_db(
 
 
 def extract_quick_sell_query(text: str) -> Optional[dict]:
-    m = re.match(r"^كويك ((?:https?://)?t\.me/nft/([A-Za-z0-9_]+)-(\d+))$", text.strip(), re.IGNORECASE)
+    m = re.match(r"^quick ((?:https?://)?t\.me/nft/([A-Za-z0-9_]+)-(\d+))$", text.strip(), re.IGNORECASE)
     if not m:
         return None
     raw_url, slug_raw, num_str = m.group(1), m.group(2), m.group(3)
@@ -1215,39 +1208,25 @@ async def fetch_exact_quick_sell_from_mrkt(q_info: dict) -> dict:
     return result
 
 
-def _prepare_text(text) -> str:
-    if text is None:
-        return ""
-    s = str(text)
-    if not s or not ARABIC_SHAPING_AVAILABLE:
-        return s
-    if not re.search(r"[\u0600-\u06FF]", s):
-        return s
-    try:
-        return get_display(arabic_reshaper.reshape(s))
-    except Exception:
-        return s
-
-
 def _load_clean_fonts():
     font_candidates = [
-        "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
     ]
     regular_candidates = [
-        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
     ]
     bold_path = next((p for p in font_candidates if os.path.exists(p)), None)
     reg_path = next((p for p in regular_candidates if os.path.exists(p)), None)
     if bold_path and reg_path:
         return (
-            ImageFont.truetype(bold_path, 64), 
-            ImageFont.truetype(bold_path, 44), 
-            ImageFont.truetype(reg_path, 30),   
-            ImageFont.truetype(bold_path, 24), 
+            ImageFont.truetype(bold_path, 72),  # f_title
+            ImageFont.truetype(bold_path, 52),  # f_price
+            ImageFont.truetype(reg_path, 38),   # f_sub
+            ImageFont.truetype(bold_path, 30),  # f_badge
         )
     d = ImageFont.load_default()
     return d, d, d, d
@@ -1318,76 +1297,76 @@ def _compose_gift_info_panel(img: Image.Image, draw: ImageDraw.ImageDraw, data: 
     num_txt = f"#{data['number']}" if data.get("number") else ""
 
     draw.rounded_rectangle([18, 18, 412, 954], radius=28, fill=(28, 31, 36))
-    _paste_fetched_photo_only(img, draw, 28, 28, 402, 410, (28, 31, 36), main_art, radius=24)
+    _paste_fetched_photo_only(img, draw, 28, 28, 402, 440, (28, 31, 36), main_art, radius=24)
     
     if main_art is not None:
         draw.rounded_rectangle([310, 44, 390, 84], radius=8, fill=(18, 20, 24))
         draw.text((325, 52), "MRKT", fill=(246, 204, 24), font=f_badge)
 
     if title_txt:
-        draw.text((30, 426), _prepare_text(title_txt[:18]), fill=(248, 250, 252), font=f_title)
+        draw.text((30, 465), title_txt[:18], fill=(248, 250, 252), font=f_title)
     if num_txt:
-        draw.text((30, 500), _prepare_text(num_txt), fill=(168, 176, 188), font=f_price)
+        draw.text((30, 545), num_txt, fill=(168, 176, 188), font=f_price)
 
     attrs = [
         ("Model", data.get("model"), data.get("model_rarity")),
         ("Backdrop", data.get("backdrop"), data.get("backdrop_rarity")),
         ("Symbol", data.get("symbol"), data.get("symbol_rarity")),
     ]
-    y_attr = 560
+    y_attr = 600
     for k_label, v_label, r_label in attrs:
         draw.rounded_rectangle([30, y_attr, 400, y_attr + 100], radius=16, fill=(38, 42, 49))
-        draw.text((48, y_attr + 14), k_label, fill=(155, 163, 175), font=f_badge)
+        draw.text((48, y_attr + 12), k_label, fill=(155, 163, 175), font=f_badge)
         
         if v_label:
-            draw.text((48, y_attr + 50), _prepare_text(str(v_label)[:18]), fill=(248, 250, 252), font=f_price)
+            draw.text((48, y_attr + 52), str(v_label)[:18], fill=(248, 250, 252), font=f_price)
         if r_label:
             rb = draw.textbbox((0, 0), str(r_label), font=f_badge)
-            draw.text((380 - (rb[2] - rb[0]), y_attr + 14), str(r_label), fill=(246, 204, 24), font=f_badge)
+            draw.text((380 - (rb[2] - rb[0]), y_attr + 12), str(r_label), fill=(246, 204, 24), font=f_badge)
         y_attr += 115
 
     if data.get("model"):
-        _draw_filter_icon(draw, 34, 918, (248, 250, 252))
-        draw.rounded_rectangle([72, 890, 350, 946], radius=13, fill=(38, 42, 49))
+        _draw_filter_icon(draw, 34, 912, (248, 250, 252))
+        draw.rounded_rectangle([72, 885, 350, 940], radius=13, fill=(38, 42, 49))
         pill_txt = f"{data.get('model')}  ×"
-        draw.text((92, 905), _prepare_text(pill_txt[:20]), fill=(246, 204, 24), font=f_badge)
+        draw.text((92, 898), pill_txt[:20], fill=(246, 204, 24), font=f_badge)
 
 
 def _compose_quick_sell_panel(img: Image.Image, draw: ImageDraw.ImageDraw, quick_val, fonts: tuple):
     f_title, f_price, f_sub, f_badge = fonts
     draw.rounded_rectangle([430, 18, 806, 480], radius=28, fill=(28, 31, 36))
-    draw.rounded_rectangle([430, 18, 806, 276], radius=28, fill=(246, 204, 24))
+    draw.rounded_rectangle([430, 18, 806, 310], radius=28, fill=(246, 204, 24))
     cx_y = (430 + 806) // 2
     
     draw.ellipse([756, 36, 786, 66], fill=(20, 22, 26))
     draw.text((765, 37), "!", fill=(246, 204, 24), font=f_price)
-    _draw_clipboard_icon(draw, cx_y, 90, (20, 22, 26))
+    _draw_clipboard_icon(draw, cx_y, 100, (20, 22, 26))
 
     if quick_val is not None:
         quick_str = f"{_format_clean_ton(quick_val)} TON"
         q_bbox = draw.textbbox((0, 0), quick_str, font=f_title)
         q_w = q_bbox[2] - q_bbox[0]
-        draw.polygon([(cx_y - q_w // 2 - 30, 175), (cx_y - q_w // 2 - 15, 155), (cx_y - q_w // 2, 175), (cx_y - q_w // 2 - 15, 195)], fill=(20, 22, 26))
-        draw.text((cx_y - q_w // 2 + 8, 145), quick_str, fill=(20, 22, 26), font=f_title)
+        draw.polygon([(cx_y - q_w // 2 - 35, 185), (cx_y - q_w // 2 - 15, 160), (cx_y - q_w // 2, 185), (cx_y - q_w // 2 - 15, 210)], fill=(20, 22, 26))
+        draw.text((cx_y - q_w // 2 + 10, 160), quick_str, fill=(20, 22, 26), font=f_title)
     else:
-        no_price = "غير متوفر"
+        no_price = "Not Available"
         q_bbox = draw.textbbox((0, 0), no_price, font=f_title)
         q_w = q_bbox[2] - q_bbox[0]
-        draw.text((cx_y - q_w // 2, 145), _prepare_text(no_price), fill=(20, 22, 26), font=f_title)
+        draw.text((cx_y - q_w // 2, 175), no_price, fill=(20, 22, 26), font=f_title)
 
     sub_q = "Any gift of this collection"
     sq_bbox = draw.textbbox((0, 0), sub_q, font=f_badge)
-    draw.text((cx_y - (sq_bbox[2] - sq_bbox[0]) // 2, 220), sub_q, fill=(68, 58, 20), font=f_badge)
+    draw.text((cx_y - (sq_bbox[2] - sq_bbox[0]) // 2, 255), sub_q, fill=(68, 58, 20), font=f_badge)
 
-    draw.rounded_rectangle([452, 294, 784, 362], radius=14, fill=(44, 48, 55))
+    draw.rounded_rectangle([450, 335, 786, 405], radius=14, fill=(44, 48, 55))
     ao_label = "All Orders"
     ao_bbox = draw.textbbox((0, 0), ao_label, font=f_price)
-    draw.text((cx_y - (ao_bbox[2] - ao_bbox[0]) // 2, 310), ao_label, fill=(248, 250, 252), font=f_price)
+    draw.text((cx_y - (ao_bbox[2] - ao_bbox[0]) // 2, 355), ao_label, fill=(248, 250, 252), font=f_price)
 
-    draw.rounded_rectangle([452, 380, 784, 456], radius=14, fill=(255, 231, 96))
+    draw.rounded_rectangle([450, 420, 786, 480], radius=14, fill=(255, 231, 96))
     qb_label = "Quick sell"
     qb_bbox = draw.textbbox((0, 0), qb_label, font=f_price)
-    draw.text((cx_y - (qb_bbox[2] - qb_bbox[0]) // 2, 400), qb_label, fill=(20, 22, 26), font=f_price)
+    draw.text((cx_y - (qb_bbox[2] - qb_bbox[0]) // 2, 438), qb_label, fill=(20, 22, 26), font=f_price)
 
 
 def _compose_cheapest_gift_card(img: Image.Image, draw: ImageDraw.ImageDraw, box: tuple, item: Optional[dict], art_img: Optional[Image.Image], default_title: str, fonts: tuple):
@@ -1397,7 +1376,7 @@ def _compose_cheapest_gift_card(img: Image.Image, draw: ImageDraw.ImageDraw, box
     if item is None:
         return
         
-    art_bottom = y1 + 260 
+    art_bottom = y1 + 310
     _paste_fetched_photo_only(img, draw, x1 + 14, y1 + 14, x2 - 14, art_bottom, (28, 31, 36), art_img, radius=20)
     
     c_title = str(item.get("title") or default_title)[:16]
@@ -1405,13 +1384,13 @@ def _compose_cheapest_gift_card(img: Image.Image, draw: ImageDraw.ImageDraw, box
     c_price = _format_clean_ton(item.get("price"))
     
     if c_title:
-        draw.text((x1 + 20, art_bottom + 20), _prepare_text(c_title), fill=(248, 250, 252), font=f_price)
+        draw.text((x1 + 20, art_bottom + 15), c_title, fill=(248, 250, 252), font=f_price)
     if c_num:
-        draw.text((x1 + 20, art_bottom + 75), _prepare_text(c_num), fill=(162, 170, 182), font=f_sub)
+        draw.text((x1 + 20, art_bottom + 75), c_num, fill=(162, 170, 182), font=f_sub)
     if c_price:
-        py_row = y2 - 40
+        py_row = y2 - 45
         draw.polygon([(x1 + 22, py_row), (x1 + 32, py_row - 12), (x1 + 42, py_row), (x1 + 32, py_row + 12)], fill=(248, 250, 252))
-        draw.text((x1 + 55, y2 - 62), _prepare_text(c_price), fill=(248, 250, 252), font=f_price)
+        draw.text((x1 + 55, y2 - 70), c_price, fill=(248, 250, 252), font=f_price)
         _draw_cart_icon(draw, x2 - 20, py_row, (162, 170, 182))
 
 
@@ -1451,7 +1430,7 @@ async def render_quick_sell_card_image(data: dict) -> Optional[bytes]:
             _compose_cheapest_gift_card(img, draw, box, item, sub_arts[idx], title_txt, fonts)
 
         draw.text((20, 976), "MRKT · Quick sell", fill=(155, 163, 175), font=f_sub)
-        draw.text((1035, 976), _prepare_text("00:44 · صيرفة"), fill=(155, 163, 175), font=f_sub)
+        draw.text((1035, 976), "00:44 · MRKT", fill=(155, 163, 175), font=f_sub)
 
         buf = io.BytesIO()
         img.save(buf, format="PNG")
@@ -1467,37 +1446,37 @@ def build_quick_sell_reply(data: dict) -> str:
     gift_link = f'<a href="{data["url"]}">{display_name}</a>'
 
     attrs = [a for a in (data.get("model"), data.get("backdrop"), data.get("symbol")) if a]
-    attrs_line = " · ".join(attrs) if attrs else "بيانات الهدية من ماركت"
+    attrs_line = " · ".join(attrs) if attrs else "Gift data from MRKT"
 
     quick_val = data.get("quick_ton")
     floor_val = data.get("floor_ton")
 
     if quick_val is not None:
         usd_val = round(float(quick_val) * TON_USD_RATE, 2)
-        quick_line = f"⚡البيع الفوري: {quick_val:g} TON ≈ ${usd_val:g}"
+        quick_line = f"⚡Quick Sell: {quick_val:g} TON ≈ ${usd_val:g}"
     else:
-        quick_line = "⚡البيع الفوري: غير متوفر حالياً على ماركت"
+        quick_line = "⚡Quick Sell: Not available on MRKT"
 
     if floor_val is not None:
-        floor_line = f"📉الأرضية: {floor_val:g} TON"
+        floor_line = f"📉Floor Price: {floor_val:g} TON"
     else:
-        floor_line = "📉الأرضية: غير متوفرة حالياً"
+        floor_line = "📉Floor Price: Not available"
 
     if quick_val is not None and floor_val is not None and floor_val > 0:
         diff_pct = round(((floor_val - quick_val) / floor_val) * 100, 1)
-        relation_line = f"↕ الكويك أقل من الأرضية بـ {diff_pct:g}%" if diff_pct >= 0 else f"↕ الكويك أعلى من الأرضية بـ {abs(diff_pct):g}%"
+        relation_line = f"↕ Difference: {diff_pct:g}% below floor" if diff_pct >= 0 else f"↕ Difference: {abs(diff_pct):g}% above floor"
     else:
-        relation_line = "↕ نسبة الفرق: غير متاحة"
+        relation_line = "↕ Difference: Not available"
 
     lines = [
         f"🎁 {gift_link}",
         attrs_line,
         "",
         quick_line,
-        "🎯الطلب على: الكولكشن",
+        "🎯Demand: Collection",
         floor_line,
         relation_line,
-        "⏱ 0.5ث · MRKT",
+        "⏱ 0.5s · MRKT",
     ]
     return "\n".join(lines)
 
@@ -1604,7 +1583,7 @@ async def _fetch_gift_number_via_search(mc, col) -> Optional[int]:
 
 async def sync_prices_from_mrkt() -> int:
     if not (API_ID_ENV.isdigit() and API_HASH_ENV):
-        raise RuntimeError("TG_API_ID / TG_API_HASH غير مكتملة.")
+        raise RuntimeError("TG_API_ID / TG_API_HASH missing.")
 
     async with _SYNC_LOCK:
         try:
@@ -1865,9 +1844,9 @@ def linkify_gifts_in_reply(ai_reply: str) -> str:
 async def cmd_start(message: types.Message):
     user_conversations.pop(message.from_user.id, None)
     text = (
-        "أهلاً بك في Giftpulse — هدايا تيليجرام وسوق "
-        f'<a href="{DEFAULT_MARKET_URL}">ماركت</a>.\n'
-        f'المطور: <a href="https://t.me/{DEVELOPER_USERNAME}">{DEVELOPER_NAME}</a>'
+        "Welcome to Giftpulse — Telegram Gifts and the "
+        f'<a href="{DEFAULT_MARKET_URL}">MRKT</a>.\n'
+        f'Developer: <a href="https://t.me/{DEVELOPER_USERNAME}">{DEVELOPER_NAME}</a>'
     )
     await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
 
@@ -1875,31 +1854,30 @@ async def cmd_start(message: types.Message):
 @dp.message()
 async def handle_user_message(message: types.Message):
     if not message.text:
-        await message.answer("أرسل نصاً عن الهدايا أو TON أو ماركت.")
+        await message.answer("Send a message about gifts, TON, or MRKT.")
         return
 
     user_id = message.from_user.id
     user_text = message.text.strip()
 
     if ADMIN_ID is not None and user_id == ADMIN_ID:
-        if user_text == "حالة_القاعدة":
+        if user_text == "db_status":
             await message.answer(get_db_status_report(), disable_web_page_preview=True)
             return
-        # تم مسح أمر فحص_اوردر من هنا
-        if user_text == "مزامنة_الاسعار":
+        if user_text == "sync_prices":
             if not os.path.exists(mrkt_session_path()):
-                await message.answer("ملف الجلسة mrkt.session غير موجود.")
+                await message.answer("mrkt.session file not found.")
                 return
             try:
                 n = await sync_prices_from_mrkt()
-                await message.answer(f"تمت مزامنة {n} كولكشن (أرقام: {_SYNC_STATUS['last_numbers_count']}).")
+                await message.answer(f"Synced {n} collections (Numbers: {_SYNC_STATUS['last_numbers_count']}).")
             except Exception as e:
-                await message.answer(f"فشلت المزامنة: {e}")
+                await message.answer(f"Sync failed: {e}")
             return
 
     quick_info = extract_quick_sell_query(user_text)
     if quick_info:
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="فتح سوق MRKT", url=DEFAULT_MARKET_URL)]])
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Open MRKT", url=DEFAULT_MARKET_URL)]])
         exact_data = await fetch_exact_quick_sell_from_mrkt(quick_info)
         caption_txt = build_quick_sell_reply(exact_data)
         card_bytes = await render_quick_sell_card_image(exact_data)
@@ -1911,14 +1889,14 @@ async def handle_user_message(message: types.Message):
 
     nft_link = extract_nft_query(user_text)
     if nft_link:
-        await message.answer(f'رابط الهدية: <a href="{nft_link}">فتح الهدية</a>', parse_mode="HTML", disable_web_page_preview=True)
+        await message.answer(f'Gift link: <a href="{nft_link}">Open Gift</a>', parse_mode="HTML", disable_web_page_preview=True)
         return
 
     if user_id not in user_conversations:
         user_conversations[user_id] = [{"role": "system", "content": EXPERT_SYSTEM_PROMPT}]
 
     db_snapshot = get_relevant_gifts_summary(user_text)
-    user_conversations[user_id].append({"role": "user", "content": f"{user_text}\n\n[بيانات قاعدة البيانات: {db_snapshot}]"})
+    user_conversations[user_id].append({"role": "user", "content": f"{user_text}\n\n[Database data: {db_snapshot}]"})
     if len(user_conversations[user_id]) > 5:
         user_conversations[user_id] = [user_conversations[user_id][0]] + user_conversations[user_id][-4:]
 
@@ -1936,14 +1914,14 @@ async def handle_user_message(message: types.Message):
         user_conversations[user_id].append({"role": "assistant", "content": ai_reply})
 
         linked_reply = linkify_gifts_in_reply(ai_reply)
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="فتح سوق MRKT", url=DEFAULT_MARKET_URL)]])
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Open MRKT", url=DEFAULT_MARKET_URL)]])
         try:
             await message.answer(linked_reply, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
         except Exception:
             await message.answer(re.sub(r"<[^>]+>", "", linked_reply), reply_markup=kb, disable_web_page_preview=True)
     except Exception as e:
         print(f"Groq/Bot error: {e}")
-        await message.answer("حدث خطأ تقني مؤقت، حاول مجدداً.")
+        await message.answer("A temporary technical error occurred, please try again.")
 
 
 async def main():
