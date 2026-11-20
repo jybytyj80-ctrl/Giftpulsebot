@@ -15,6 +15,10 @@ TEST_NFT_URL = os.getenv("TEST_NFT_URL", "https://t.me/nft/FlyingBroom-3349").st
 OUT_SCREENSHOT = os.getenv("OUT_SCREENSHOT", "stage2_view.png").strip()
 
 
+def log(msg: str) -> None:
+    print(msg, flush=True)
+
+
 def parse_tg_web_app_data(web_url: str) -> tuple[str, dict]:
     parsed = urlparse(web_url)
     params = parse_qs(parsed.fragment or "")
@@ -43,7 +47,7 @@ async def get_webview_url() -> str | None:
     await client.connect()
     try:
         if not await client.is_user_authorized():
-            print("ERROR: Session is not authorized")
+            log("ERROR: Session is not authorized")
             return None
         bot_entity = await client.get_input_entity(BOT_USERNAME)
         res = await client(
@@ -62,16 +66,16 @@ async def get_webview_url() -> str | None:
 
 async def main():
     if not (API_ID and API_HASH and SESSION_STRING):
-        print("ERROR: Missing TG_API_ID, TG_API_HASH, or TG_SESSION_STRING")
+        log("ERROR: Missing TG_API_ID, TG_API_HASH, or TG_SESSION_STRING")
         return
 
     web_url = await get_webview_url()
     if not web_url:
-        print("ERROR: Failed to obtain WebView URL")
+        log("ERROR: Failed to obtain WebView URL")
         return
 
     raw_init_data, init_data_unsafe = parse_tg_web_app_data(web_url)
-    print("Obtained WebView URL successfully. Launching headless browser...")
+    log("Obtained WebView URL successfully. Launching headless browser...")
 
     page_errors: list[str] = []
 
@@ -185,24 +189,27 @@ async def main():
 
             info = await page.evaluate(
                 """() => {
+                    const pre = document.querySelector('#preloader');
+                    const preHidden = !pre || pre.classList.contains('preloader-hidden') || getComputedStyle(pre).display === 'none';
                     const clone = document.body ? document.body.cloneNode(true) : null;
                     if (clone) clone.querySelectorAll('style, script').forEach(el => el.remove());
                     const text = (clone && (clone.innerText || clone.textContent) || '').replace(/\\s+/g, ' ').trim();
                     return {
-                        postedEvents: window.__postedEvents || [],
+                        postedEvents: (window.__postedEvents || []).slice(0, 15),
+                        preHidden,
                         textPreview: text.slice(0, 220),
                         elementsCount: document.querySelectorAll('*').length
                     };
                 }"""
             )
             await page.screenshot(path=OUT_SCREENSHOT, full_page=False)
-            print("Posted events:", info["postedEvents"])
-            print("Page errors:", page_errors[:5])
-            print("Text preview:", repr(info["textPreview"]))
-            print("Elements count:", info["elementsCount"])
-            print("Saved screenshot to:", OUT_SCREENSHOT)
+            log(f"Posted events: {info['postedEvents']}")
+            log(f"Page errors: {page_errors[:5]}")
+            log(f"Preloader hidden: {info['preHidden']} | Elements: {info['elementsCount']}")
+            log(f"Text preview: {info['textPreview']!r}")
+            log(f"Saved screenshot to: {OUT_SCREENSHOT}")
         except Exception as e:
-            print(f"Browser navigation/screenshot failed: {type(e).__name__}: {e}")
+            log(f"Browser navigation/screenshot failed: {type(e).__name__}: {e}")
         finally:
             await browser.close()
 
