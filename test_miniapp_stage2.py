@@ -1,7 +1,5 @@
 import asyncio
-import json
 import os
-from urllib.parse import parse_qs, unquote, urlparse
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import RequestWebViewRequest
@@ -13,29 +11,6 @@ SESSION_STRING = (os.getenv("TG_SESSION_STRING") or "").strip()
 BOT_USERNAME = (os.getenv("MRKT_BOT_USERNAME") or "mrkt").strip().lstrip("@")
 TEST_NFT_URL = os.getenv("TEST_NFT_URL", "https://t.me/nft/FlyingBroom-3349").strip()
 OUT_SCREENSHOT = os.getenv("OUT_SCREENSHOT", "stage2_view.png").strip()
-
-
-def parse_tg_web_app_data(web_url: str) -> tuple[str, dict]:
-    parsed = urlparse(web_url)
-    params = parse_qs(parsed.fragment or "")
-    raw_init_data = unquote(params.get("tgWebAppData", [""])[0])
-    unsafe: dict = {"start_param": TEST_NFT_URL.split("/")[-1]}
-
-    if raw_init_data:
-        inner = parse_qs(raw_init_data, keep_blank_values=True)
-        for k, vals in inner.items():
-            if not vals:
-                continue
-            v = vals[0]
-            if k == "user":
-                try:
-                    unsafe["user"] = json.loads(v)
-                except Exception:
-                    unsafe["user"] = v
-            else:
-                unsafe[k] = v
-
-    return raw_init_data, unsafe
 
 
 async def get_webview_url() -> str | None:
@@ -70,7 +45,6 @@ async def main():
         print("ERROR: Failed to obtain WebView URL")
         return
 
-    raw_init_data, init_data_unsafe = parse_tg_web_app_data(web_url)
     print("Obtained WebView URL successfully. Launching headless browser...")
 
     page_errors: list[str] = []
@@ -87,112 +61,22 @@ async def main():
         page = await context.new_page()
         page.on("pageerror", lambda err: page_errors.append(str(err)))
 
-        await page.add_init_script(
-            f"""() => {{
-                const rawInitData = {raw_init_data!r};
-                const unsafeData = {json.dumps(init_data_unsafe)};
-                const noop = () => {{}};
-                const posted = [];
-                window.__postedEvents = posted;
-
-                const emitToHost = (eventType, eventData) => {{
-                    window.dispatchEvent(new MessageEvent('message', {{
-                        data: JSON.stringify({{ eventType, eventData }})
-                    }}));
-                    if (window.Telegram && window.Telegram.WebView && typeof window.Telegram.WebView.receiveEvent === 'function') {{
-                        window.Telegram.WebView.receiveEvent(eventType, eventData);
-                    }}
-                }};
-
-                const handlePostEvent = (eventType, rawData) => {{
-                    posted.push(String(eventType));
-                    if (eventType === 'web_app_request_theme') {{
-                        emitToHost('theme_changed', {{
-                            theme_params: {{
-                                bg_color: '#18222d',
-                                text_color: '#ffffff',
-                                hint_color: '#b1c3d5',
-                                link_color: '#6ab2f2',
-                                button_color: '#5288c1',
-                                button_text_color: '#ffffff',
-                                secondary_bg_color: '#131c26'
-                            }}
-                        }});
-                    }} else if (eventType === 'web_app_request_viewport') {{
-                        emitToHost('viewport_changed', {{
-                            height: 900,
-                            width: 1280,
-                            is_state_stable: true,
-                            is_expanded: true
-                        }});
-                    }} else if (eventType === 'web_app_request_safe_area') {{
-                        emitToHost('safe_area_changed', {{ top: 0, bottom: 0, left: 0, right: 0 }});
-                    }} else if (eventType === 'web_app_request_content_safe_area') {{
-                        emitToHost('content_safe_area_changed', {{ top: 0, bottom: 0, left: 0, right: 0 }});
-                    }}
-                }};
-
-                window.TelegramWebviewProxy = {{
-                    postEvent: (eventType, data) => handlePostEvent(eventType, data)
-                }};
-
-                window.Telegram = window.Telegram || {{}};
-                window.Telegram.WebView = {{
-                    receiveEvent: noop,
-                    postEvent: handlePostEvent
-                }};
-                window.Telegram.WebApp = {{
-                    initData: rawInitData,
-                    initDataUnsafe: unsafeData,
-                    version: "9.0",
-                    platform: "android",
-                    colorScheme: "dark",
-                    themeParams: {{
-                        bg_color: "#18222d",
-                        text_color: "#ffffff",
-                        hint_color: "#b1c3d5",
-                        link_color: "#6ab2f2",
-                        button_color: "#5288c1",
-                        button_text_color: "#ffffff",
-                        secondary_bg_color: "#131c26"
-                    }},
-                    isExpanded: true,
-                    viewportHeight: 900,
-                    viewportStableHeight: 900,
-                    ready: noop,
-                    expand: noop,
-                    close: noop,
-                    onEvent: noop,
-                    offEvent: noop,
-                    postEvent: handlePostEvent,
-                    BackButton: {{ isVisible: false, show: noop, hide: noop, onClick: noop, offClick: noop }},
-                    MainButton: {{ text: "", isVisible: false, isActive: true, show: noop, hide: noop, onClick: noop, offClick: noop, setText: noop }},
-                    HapticFeedback: {{ impactOccurred: noop, notificationOccurred: noop, selectionChanged: noop }}
-                }};
-            }}"""
-        )
-
         try:
             await page.goto(web_url, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(7000)
+            await page.wait_for_timeout(5000)
 
-            info = await page.evaluate(
-                """() => {
-                    const clone = document.body ? document.body.cloneNode(true) : null;
-                    if (clone) clone.querySelectorAll('style, script').forEach(el => el.remove());
-                    const text = (clone && (clone.innerText || clone.textContent) || '').replace(/\\s+/g, ' ').trim();
-                    return {
-                        postedEvents: window.__postedEvents || [],
-                        textPreview: text.slice(0, 220),
-                        elementsCount: document.querySelectorAll('*').length
-                    };
+            vn_code = await page.evaluate(
+                """async () => {
+                    const r = await fetch('https://cdn.tgmrkt.io/js/app-shared-BZgR15pj.js');
+                    const txt = await r.text();
+                    const idx = txt.indexOf('function Vn(');
+                    if (idx === -1) return 'function Vn( not found';
+                    return txt.slice(idx, idx + 900);
                 }"""
             )
             await page.screenshot(path=OUT_SCREENSHOT, full_page=False)
-            print("Posted events:", info["postedEvents"])
             print("Page errors:", page_errors[:5])
-            print("Text preview:", repr(info["textPreview"]))
-            print("Elements count:", info["elementsCount"])
+            print("VN_CODE:", vn_code)
             print("Saved screenshot to:", OUT_SCREENSHOT)
         except Exception as e:
             print(f"Browser navigation/screenshot failed: {type(e).__name__}: {e}")
