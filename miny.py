@@ -1014,7 +1014,6 @@ async def _safe_mc_call(mc, method_names: tuple, preferred_values: dict, positio
 
 
 async def fetch_exact_quick_sell_from_mrkt(q_info: dict) -> dict:
-    # نستخدم نفس القفل الخاص بالمزامنة حتى لا تُفتح جلسة MRKT مرتين في نفس الوقت
     async with _SYNC_LOCK:
         return await _fetch_exact_quick_sell_inner(q_info)
 
@@ -1398,7 +1397,6 @@ def _compose_cheapest_gift_card(img: Image.Image, draw: ImageDraw.ImageDraw, box
 
 
 # ===================== رسّام صورة الكويك سيل (دقة عالية، خطوط كبيرة) =====================
-# مقاسات التصميم (نفس أبعاد صورة MRKT الأصلية) ثم نرسم بدقة مضاعفة لنعومة الحواف
 QC_W, QC_H = 1524, 1310
 QC_SS = 2
 
@@ -1430,7 +1428,6 @@ _qc_FONT_CACHE = {}
 
 
 def _qc_font(size: int, bold: bool = False):
-    """يرجع (خط, سماكة_تغميق). إن لم يوجد خط نظام نستخدم الخط المدمج في Pillow بحجم قابل للتغيير."""
     key = (size, bold)
     if key in _qc_FONT_CACHE:
         return _qc_FONT_CACHE[key]
@@ -1444,7 +1441,7 @@ def _qc_font(size: int, bold: bool = False):
             except Exception:
                 pass
     try:
-        f = ImageFont.load_default(size=size)  # Pillow >= 10.1: خط مدمج بحجم قابل للتحديد
+        f = ImageFont.load_default(size=size)
         res = (f, max(1, size // 28) if bold else 0)
     except TypeError:
         res = (ImageFont.load_default(), 0)
@@ -1453,7 +1450,6 @@ def _qc_font(size: int, bold: bool = False):
 
 
 def _qc_text(d, x, y, txt, size, fill, bold=False, align="l"):
-    """يرسم نصاً. align: l يسار، r يمين، c وسط (بالنسبة لـ x). y هو أعلى النص."""
     if txt is None or txt == "":
         return 0
     font, stroke = _qc_font(int(size * QC_SS), bold)
@@ -1478,7 +1474,6 @@ def _qc_poly(d, pts, fill):
 
 
 def _qc_diamond(d, cx, cy, w, h, fill):
-    """رمز التون (ماسة) كما في MRKT."""
     top = cy - h / 2
     _qc_poly(d, [(cx - w / 2, top + h * 0.22), (cx - w * 0.28, top), (cx + w * 0.28, top), (cx + w / 2, top + h * 0.22),
               (cx, cy + h / 2)], fill)
@@ -1545,7 +1540,7 @@ def _qc_clipboard(d, cx, cy):
 def _qc_small_card(d, canvas, box, item, art, default_title):
     x1, y1, x2, y2 = box
     _qc_rr(d, box, 36, QC_CARD)
-    art_h = x2 - x1  # صورة مربعة
+    art_h = x2 - x1
     if item is None:
         return
     _qc_paste_art(canvas, art, (x1, y1, x2, y1 + art_h), 36, corners=(True, True, False, False))
@@ -1566,7 +1561,6 @@ def _qc_build_card(data: dict, main_art: Optional[Image.Image], sub_arts: list) 
     canvas = Image.new("RGB", (QC_W * QC_SS, QC_H * QC_SS), QC_BG)
     d = ImageDraw.Draw(canvas)
 
-    # ---------- البطاقة اليسرى: الهدية ----------
     _qc_rr(d, (28, 28, 628, 1236), 36, QC_CARD)
     _qc_paste_art(canvas, main_art, (52, 52, 604, 604), 30)
     if main_art is not None:
@@ -1601,7 +1595,6 @@ def _qc_build_card(data: dict, main_art: Optional[Image.Image], sub_arts: list) 
         d.line([(cx0 * QC_SS, 1112 * QC_SS), ((cx0 + 14) * QC_SS, 1126 * QC_SS)], fill=QC_YELLOW, width=int(3 * QC_SS))
         d.line([((cx0 + 14) * QC_SS, 1112 * QC_SS), (cx0 * QC_SS, 1126 * QC_SS)], fill=QC_YELLOW, width=int(3 * QC_SS))
 
-    # ---------- المربع الأصفر: الكويك سيل ----------
     _qc_rr(d, (652, 28, 1062, 620), 36, QC_CARD)
     _qc_rr(d, (652, 28, 1062, 438), 36, QC_YELLOW)
     d.rectangle([652 * QC_SS, 400 * QC_SS, 1062 * QC_SS, 438 * QC_SS], fill=QC_YELLOW)
@@ -1629,7 +1622,6 @@ def _qc_build_card(data: dict, main_art: Optional[Image.Image], sub_arts: list) 
     _qc_rr(d, (670, 534, 1044, 600), 16, QC_YELLOW)
     _qc_text(d, 857, 550, "Quick sell", 32, QC_BLACK, bold=True, align="c")
 
-    # ---------- أرخص ثلاث هدايا ----------
     cheap = data.get("cheapest_three") or []
     boxes = [(1086, 28, 1496, 620), (652, 644, 1062, 1236), (1086, 644, 1496, 1236)]
     for i, box in enumerate(boxes):
@@ -2135,11 +2127,10 @@ async def change_lang_callback(callback_query: types.CallbackQuery):
     else:
         text = "Language changed to English successfully ✅"
         
-    await callback_query.answer(text)
+    await callback_query.answer(text, show_alert=True)
     
     # تحديث الرسالة لإزالة الأزرار بعد الاختيار
     await callback_query.message.edit_reply_markup(reply_markup=None)
-    await callback_query.message.answer(text)
 
 
 @dp.message()
@@ -2154,10 +2145,10 @@ async def handle_user_message(message: types.Message):
     lang = user_langs.get(user_id, "ar")
 
     if ADMIN_ID is not None and user_id == ADMIN_ID:
-        if user_text == "db_status":
+        if user_text == "حالة_القاعدة":
             await message.answer(get_db_status_report(), disable_web_page_preview=True)
             return
-        if user_text == "sync_prices":
+        if user_text == "مزامنة_الاسعار":
             if not os.path.exists(mrkt_session_path()):
                 await message.answer("mrkt.session file not found.")
                 return
